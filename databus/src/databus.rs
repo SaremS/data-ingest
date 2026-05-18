@@ -212,4 +212,20 @@ mod tests {
 
         assert!(rx.recv().await.is_none());
     }
+
+    #[tokio::test]
+    async fn test_publish_without_subscribers_is_ok() {
+        let bus = DataBus::<String>::new(10);
+
+        let msg = Message {
+            header: MessageHeader {
+                topic: "missing_topic".to_string(),
+                message_type: MessageType::Data,
+            },
+            payload: "no listeners".to_string(),
+        };
+
+        assert!(bus.publish("missing_topic", msg).await.is_ok());
+        assert!(!bus.topics.contains_key("missing_topic"));
+    }
 }

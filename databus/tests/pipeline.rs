@@ -1,0 +1,176 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use databus::{
+    databus::{DataBus, Message, MessageHeader, MessageType},
+    processor::{BusProcessor, Processor},
+    producer::{Producer, Schedule, ScheduledProducer},
+    runnable::Runnable,
+    state::State,
+    storer::{BusStorer, Storer},
+};
+use tokio::sync::Mutex;
+use tokio::time::{Duration, sleep, timeout};
+
+#[derive(Clone)]
+struct CounterState {
+    value: Arc<Mutex<i32>>,
+}
+
+impl CounterState {
+    fn new(initial: i32) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(initial)),
+        }
+    }
+}
+
+#[async_trait]
+impl State<i32> for CounterState {
+    async fn get_state(&self) -> i32 {
+        *self.value.lock().await
+    }
+
+    async fn set_state(&self, state: i32) {
+        *self.value.lock().await = state;
+    }
+}
+
+#[derive(Clone)]
+struct CollectedState {
+    value: Arc<Mutex<Vec<String>>>,
+}
+
+impl CollectedState {
+    fn new(initial: Vec<String>) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(initial)),
+        }
+    }
+}
+
+#[async_trait]
+impl State<Vec<String>> for CollectedState {
+    async fn get_state(&self) -> Vec<String> {
+        self.value.lock().await.clone()
+    }
+
+    async fn set_state(&self, state: Vec<String>) {
+        *self.value.lock().await = state;
+    }
+}
+
+struct SequenceProducer;
+
+#[async_trait]
+impl Producer<String, i32> for SequenceProducer {
+    async fn produce(&self, old_state: &i32) -> (Message<String>, i32) {
+        let next = old_state + 1;
+        (
+            Message {
+                header: MessageHeader {
+                    topic: "raw".to_string(),
+                    message_type: MessageType::Data,
+                },
+                payload: format!("item-{next}"),
+            },
+            next,
+        )
+    }
+}
+
+struct DecoratingProcessor;
+
+#[async_trait]
+impl Processor<String, i32> for DecoratingProcessor {
+    async fn process(&self, message: &Message<String>, old_state: &i32) -> (Message<String>, i32) {
+        let next = old_state + 1;
+        (
+            Message {
+                header: MessageHeader {
+                    topic: "processed".to_string(),
+                    message_type: MessageType::Data,
+                },
+                payload: format!("{}-processed-{next}", message.payload),
+            },
+            next,
+        )
+    }
+}
+
+struct CollectingStorer;
+
+#[async_trait]
+impl Storer<String, Vec<String>> for CollectingStorer {
+    async fn store(&self, message: &Message<String>, old_state: &Vec<String>) -> Vec<String> {
+        let mut next = old_state.clone();
+        next.push(message.payload.clone());
+        next
+    }
+}
+
+#[tokio::test]
+async fn producer_processor_and_storer_work_together() {
+    let bus = Arc::new(DataBus::<String>::new(8));
+    let producer_state = CounterState::new(0);
+    let processor_state = CounterState::new(0);
+    let storer_state = CollectedState::new(Vec::new());
+
+    let mut producer = ScheduledProducer::new(
+        SequenceProducer,
+        producer_state.clone(),
+        bus.clone(),
+        "raw".to_string(),
+        Schedule::Once,
+    )
+    .unwrap();
+
+    let mut processor = BusProcessor::new(
+        DecoratingProcessor,
+        processor_state.clone(),
+        bus.clone(),
+        "raw".to_string(),
+        "processed".to_string(),
+    )
+    .unwrap();
+
+    let mut storer = BusStorer::new(
+        CollectingStorer,
+        storer_state.clone(),
+        bus.clone(),
+        "processed".to_string(),
+    )
+    .unwrap();
+
+    let mut processed_rx = bus.subscribe("processed").unwrap();
+
+    let processor_worker = async {
+        processor.run().await;
+    };
+    let storer_worker = async {
+        storer.run().await;
+    };
+    let driver = async {
+        sleep(Duration::from_millis(10)).await;
+        producer.run().await;
+
+        let received = timeout(Duration::from_millis(200), processed_rx.recv())
+            .await
+            .expect("timed out waiting for processed message")
+            .expect("processed message should be received");
+
+        assert_eq!(received.payload, "item-1-processed-1");
+
+        sleep(Duration::from_millis(20)).await;
+        bus.shutdown();
+    };
+
+    tokio::join!(processor_worker, storer_worker, driver);
+
+    assert_eq!(producer_state.get_state().await, 1);
+    assert_eq!(processor_state.get_state().await, 1);
+    assert_eq!(
+        storer_state.get_state().await,
+        vec!["item-1-processed-1".to_string()]
+    );
+}

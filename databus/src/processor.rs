@@ -7,7 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{DataBus, Message, runnable::Runnable, state::State};
+use crate::{databus::{DataBus, Message}, runnable::Runnable, state::State};
 
 #[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Send + Sync>: Send + Sync {
@@ -133,7 +133,7 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>> Ru
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MessageHeader, MessageType};
+    use crate::databus::{MessageHeader, MessageType};
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
@@ -179,6 +179,30 @@ mod tests {
         }
     }
 
+    struct SlowProcessor;
+
+    #[async_trait]
+    impl Processor<String, i32> for SlowProcessor {
+        async fn process(
+            &self,
+            message: &Message<String>,
+            old_state: &i32,
+        ) -> (Message<String>, i32) {
+            sleep(Duration::from_millis(25)).await;
+            (message.clone(), old_state + 1)
+        }
+    }
+
+    fn test_message(topic: &str) -> Message<String> {
+        Message {
+            header: MessageHeader {
+                topic: topic.to_string(),
+                message_type: MessageType::Data,
+            },
+            payload: "hello bus".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn test_bus_processor_initialization() {
         let bus = Arc::new(DataBus::new(10));
@@ -199,6 +223,75 @@ mod tests {
         assert_eq!(bus_processor.output_topic, "test_output_topic");
     }
 
+    #[test]
+    fn test_bus_processor_rejects_empty_input_topic() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+
+        let err = match BusProcessor::new(
+            MockProcessor,
+            state,
+            bus,
+            "".to_string(),
+            "test_output_topic".to_string(),
+        ) {
+            Ok(_) => panic!("expected an empty input topic error"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BusProcessorError::CreationError(_)));
+        assert_eq!(
+            err.to_string(),
+            "Error Creating BusProcessor: Input topic cannot be empty"
+        );
+    }
+
+    #[test]
+    fn test_bus_processor_rejects_empty_output_topic() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+
+        let err = match BusProcessor::new(
+            MockProcessor,
+            state,
+            bus,
+            "test_input_topic".to_string(),
+            "".to_string(),
+        ) {
+            Ok(_) => panic!("expected an empty output topic error"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BusProcessorError::CreationError(_)));
+        assert_eq!(
+            err.to_string(),
+            "Error Creating BusProcessor: Output topic cannot be empty"
+        );
+    }
+
+    #[test]
+    fn test_bus_processor_rejects_same_input_and_output_topics() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+
+        let err = match BusProcessor::new(
+            MockProcessor,
+            state,
+            bus,
+            "same_topic".to_string(),
+            "same_topic".to_string(),
+        ) {
+            Ok(_) => panic!("expected matching topic validation error"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BusProcessorError::CreationError(_)));
+        assert_eq!(
+            err.to_string(),
+            "Error Creating BusProcessor: Input and output topics must be different"
+        );
+    }
+
     #[tokio::test]
     async fn test_bus_processor_run_loop() {
         let bus = Arc::new(DataBus::new(10));
@@ -217,34 +310,122 @@ mod tests {
         )
         .unwrap();
 
-        let handle = tokio::spawn(async move {
+        let worker = async {
             bus_processor.run().await;
-        });
+        };
+        let driver = async {
+            sleep(Duration::from_millis(10)).await;
 
-        sleep(Duration::from_millis(10)).await;
+            bus.publish(&input_topic, test_message("test_input_topic"))
+                .await
+                .unwrap();
 
-        let dummy_message = Message {
-            header: MessageHeader {
-                topic: "test_input_topic".to_string(),
-                message_type: MessageType::Data,
-            },
-            payload: "hello bus".to_string(),
+            sleep(Duration::from_millis(50)).await;
+            bus.shutdown();
         };
 
-        bus.publish(&input_topic, dummy_message).await.unwrap();
-
-        sleep(Duration::from_millis(50)).await;
+        tokio::join!(worker, driver);
 
         let final_state = state_checker.get_state().await;
         assert_eq!(
             final_state, 1,
             "The state should have been incremented by the processor"
         );
+    }
+
+    #[tokio::test]
+    async fn test_bus_processor_returns_when_bus_is_closed_before_run() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+        let mut bus_processor = BusProcessor::new(
+            MockProcessor,
+            state,
+            bus.clone(),
+            "test_input_topic".to_string(),
+            "test_output_topic".to_string(),
+        )
+        .unwrap();
 
         bus.shutdown();
+        bus_processor.run().await;
 
-        handle
-            .await
-            .expect("Processor task panicked or failed to cleanly exit");
+        assert!(bus_processor.receiver.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bus_processor_stop_cancels_run_loop() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+        let mut bus_processor = BusProcessor::new(
+            MockProcessor,
+            state,
+            bus,
+            "test_input_topic".to_string(),
+            "test_output_topic".to_string(),
+        )
+        .unwrap();
+
+        bus_processor.stop().await;
+        bus_processor.run().await;
+
+        assert!(bus_processor.receiver.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_bus_processor_stops_when_output_publish_fails() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+        let state_checker = state.clone();
+        let input_topic = "test_input_topic".to_string();
+        let output_topic = "test_output_topic".to_string();
+
+        let mut bus_processor = BusProcessor::new(
+            SlowProcessor,
+            state,
+            bus.clone(),
+            input_topic.clone(),
+            output_topic,
+        )
+        .unwrap();
+
+        let worker = async {
+            bus_processor.run().await;
+        };
+        let driver = async {
+            sleep(Duration::from_millis(10)).await;
+
+            bus.publish(&input_topic, test_message("test_input_topic"))
+                .await
+                .unwrap();
+            bus.shutdown();
+        };
+
+        tokio::join!(worker, driver);
+
+        assert_eq!(state_checker.get_state().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_bus_processor_stops_when_input_channel_closes() {
+        let bus = Arc::new(DataBus::new(10));
+        let state = MockState::new(0);
+        let mut bus_processor = BusProcessor::new(
+            MockProcessor,
+            state,
+            bus.clone(),
+            "test_input_topic".to_string(),
+            "test_output_topic".to_string(),
+        )
+        .unwrap();
+
+        let worker = async {
+            bus_processor.run().await;
+        };
+        let driver = async {
+            sleep(Duration::from_millis(10)).await;
+            bus.shutdown();
+        };
+
+        tokio::join!(worker, driver);
     }
 }
