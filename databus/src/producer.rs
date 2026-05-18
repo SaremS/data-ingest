@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use databus::{DataBus, Message};
+use crate::{DataBus, Message};
 
 pub enum Schedule {
     Once,
@@ -58,7 +58,7 @@ impl<T: Clone + Send + Sync, S: Producer<T>> ScheduledProducer<T, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use databus::{MessageHeader, MessageType};
+    use crate::{MessageHeader, MessageType};
     use std::sync::Arc;
 
     struct TestProducer;

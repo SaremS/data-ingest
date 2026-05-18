@@ -7,8 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{runnable::Runnable, state::State};
-use databus::{DataBus, Message};
+use crate::{DataBus, Message, runnable::Runnable, state::State};
 
 #[derive(Error, Debug)]
 pub enum BusStorerError {

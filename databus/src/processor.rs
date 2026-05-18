@@ -7,8 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{runnable::Runnable, state::State};
-use databus::{DataBus, Message};
+use crate::{DataBus, Message, runnable::Runnable, state::State};
 
 #[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Send + Sync>: Send + Sync {
@@ -134,7 +133,7 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>> Ru
 #[cfg(test)]
 mod tests {
     use super::*;
-    use databus::{MessageHeader, MessageType};
+    use crate::{MessageHeader, MessageType};
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
