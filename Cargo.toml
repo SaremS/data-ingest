@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "databus",
+    "bus_objects",
+]
+
+resolver = "3"
