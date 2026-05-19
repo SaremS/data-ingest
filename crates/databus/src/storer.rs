@@ -7,7 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::{DataBus, Message}, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 #[derive(Error, Debug)]
 pub enum BusStorerError {
@@ -22,11 +22,11 @@ pub enum BusStorerError {
 }
 
 #[async_trait]
-pub trait Storer<T: Clone + Send + Sync, S: Send + Sync>: Send + Sync {
+pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
     async fn store(&self, message: &Message<T>, old_state: &S) -> S;
 }
 
-pub struct BusStorer<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Storer<T, S>> {
+pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>> {
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T>>,
@@ -37,7 +37,9 @@ pub struct BusStorer<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Sto
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Storer<T, S>> BusStorer<T, S, U, V> {
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>>
+    BusStorer<T, S, U, V>
+{
     pub fn new(
         processor: V,
         processor_state: U,
@@ -64,7 +66,7 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Storer<T, S>> BusSt
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Storer<T, S>> Runnable
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>> Runnable
     for BusStorer<T, S, U, V>
 {
     async fn run(&mut self) {
@@ -109,7 +111,8 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Storer<T, S>> Runna
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::databus::{MessageHeader, MessageType};
+    use crate::message::{MessageHeader, MessageType};
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
@@ -149,11 +152,11 @@ mod tests {
         }
     }
 
-    fn test_message(topic: &str, payload: &str) -> Message<String> {
+    fn test_message(payload: &str) -> Message<String> {
         Message {
             header: MessageHeader {
-                topic: topic.to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: payload.to_string(),
         }
@@ -204,12 +207,9 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(
-                &input_topic,
-                test_message("test_input_topic", "stored value"),
-            )
-            .await
-            .unwrap();
+            bus.publish(&input_topic, test_message("stored value"))
+                .await
+                .unwrap();
 
             sleep(Duration::from_millis(25)).await;
             bus.shutdown();

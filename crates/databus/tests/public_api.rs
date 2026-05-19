@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use databus::{
-    databus::{DataBus, Message, MessageHeader, MessageType},
+    databus::DataBus,
+    message::{Message, MessageHeader, MessageType},
     processor::{BusProcessor, BusProcessorError, Processor},
     producer::{Producer, ProducerError, Schedule, ScheduledProducer},
     state::State,
@@ -66,8 +68,8 @@ impl Producer<String, i32> for TestProducer {
         (
             Message {
                 header: MessageHeader {
-                    topic: "input".to_string(),
                     message_type: MessageType::Data,
+                    message_meta: HashMap::new(),
                 },
                 payload: format!("value-{}", old_state + 1),
             },
@@ -84,8 +86,8 @@ impl Processor<String, i32> for TestProcessor {
         (
             Message {
                 header: MessageHeader {
-                    topic: "output".to_string(),
                     message_type: MessageType::Data,
+                    message_meta: HashMap::new(),
                 },
                 payload: format!("{}-processed", message.payload),
             },
@@ -114,8 +116,8 @@ async fn root_exports_support_external_publish_and_subscribe() {
         "public-topic",
         Message {
             header: MessageHeader {
-                topic: "public-topic".to_string(),
                 message_type: MessageType::Error,
+                message_meta: HashMap::new(),
             },
             payload: "from integration test".to_string(),
         },
@@ -170,7 +172,10 @@ fn public_constructor_validation_errors_are_exposed() {
         "Error Creating Producer: Topic cannot be empty"
     );
 
-    assert!(matches!(processor_error, BusProcessorError::CreationError(_)));
+    assert!(matches!(
+        processor_error,
+        BusProcessorError::CreationError(_)
+    ));
     assert_eq!(
         processor_error.to_string(),
         "Error Creating BusProcessor: Input topic cannot be empty"

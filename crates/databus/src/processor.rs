@@ -7,14 +7,19 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::{DataBus, Message}, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 #[async_trait]
-pub trait Processor<T: Clone + Send + Sync, S: Send + Sync>: Send + Sync {
+pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
     async fn process(&self, message: &Message<T>, old_state: &S) -> (Message<T>, S);
 }
 
-pub struct BusProcessor<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>> {
+pub struct BusProcessor<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    V: Processor<T, S>,
+> {
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T>>,
@@ -38,7 +43,7 @@ pub enum BusProcessorError {
     CreationError(Cow<'static, str>),
 }
 
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>>
     BusProcessor<T, S, U, V>
 {
     pub fn new(
@@ -79,7 +84,7 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>>
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>> Runnable
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>> Runnable
     for BusProcessor<T, S, U, V>
 {
     async fn run(&mut self) {
@@ -133,7 +138,8 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Processor<T, S>> Ru
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::databus::{MessageHeader, MessageType};
+    use crate::message::{MessageHeader, MessageType};
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
@@ -193,11 +199,11 @@ mod tests {
         }
     }
 
-    fn test_message(topic: &str) -> Message<String> {
+    fn test_message() -> Message<String> {
         Message {
             header: MessageHeader {
-                topic: topic.to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "hello bus".to_string(),
         }
@@ -316,9 +322,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message("test_input_topic"))
-                .await
-                .unwrap();
+            bus.publish(&input_topic, test_message()).await.unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -394,9 +398,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message("test_input_topic"))
-                .await
-                .unwrap();
+            bus.publish(&input_topic, test_message()).await.unwrap();
             bus.shutdown();
         };
 

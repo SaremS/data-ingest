@@ -1,24 +1,9 @@
-use dashmap::DashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageType {
-    Data,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MessageHeader {
-    pub topic: String,
-    pub message_type: MessageType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message<T: Clone + Send + Sync> {
-    pub header: MessageHeader,
-    pub payload: T,
-}
+use crate::message::Message;
 
 pub struct DataBus<T: Clone + Send + Sync> {
     topics: DashMap<String, Vec<mpsc::Sender<Message<T>>>>,
@@ -82,6 +67,7 @@ impl<T: Clone + Send + Sync> DataBus<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -92,8 +78,8 @@ mod tests {
 
         let message = Message {
             header: MessageHeader {
-                topic: "test_topic".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "Hello, DataBus!".into(),
         };
@@ -116,8 +102,8 @@ mod tests {
             if let Some(_req) = request_rx.recv().await {
                 let response_data = Message {
                     header: MessageHeader {
-                        topic: "response_topic".to_string(),
                         message_type: MessageType::Data,
+                        message_meta: HashMap::new(),
                     },
                     payload: "Response from listener".into(),
                 };
@@ -131,8 +117,8 @@ mod tests {
 
         let request_message = Message {
             header: MessageHeader {
-                topic: "request_topic".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "Request to listener".into(),
         };
@@ -155,8 +141,8 @@ mod tests {
 
         let msg = Message {
             header: MessageHeader {
-                topic: "global_events".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "test".to_string(),
         };
@@ -178,8 +164,8 @@ mod tests {
 
         let msg = Message {
             header: MessageHeader {
-                topic: "temporary_topic".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "trigger pruning".to_string(),
         };
@@ -203,8 +189,8 @@ mod tests {
 
         let msg = Message {
             header: MessageHeader {
-                topic: "shutdown_topic".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "fail".to_string(),
         };
@@ -219,8 +205,8 @@ mod tests {
 
         let msg = Message {
             header: MessageHeader {
-                topic: "missing_topic".to_string(),
                 message_type: MessageType::Data,
+                message_meta: HashMap::new(),
             },
             payload: "no listeners".to_string(),
         };

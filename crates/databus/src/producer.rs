@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::{DataBus, Message}, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 pub enum Schedule {
     Once,
@@ -31,12 +31,16 @@ pub enum ProducerError {
 }
 
 #[async_trait]
-pub trait Producer<T: Clone + Send + Sync, S: Send + Sync>: Send + Sync {
+pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
     async fn produce(&self, old_state: &S) -> (Message<T>, S);
 }
 
-pub struct ScheduledProducer<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Producer<T, S>>
-{
+pub struct ScheduledProducer<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    V: Producer<T, S>,
+> {
     producer: V,
     producer_state: U,
     bus: Arc<DataBus<T>>,
@@ -47,7 +51,7 @@ pub struct ScheduledProducer<T: Clone + Send + Sync, S: Send + Sync, U: State<S>
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Producer<T, S>>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>>
     ScheduledProducer<T, S, U, V>
 {
     pub fn new(
@@ -75,7 +79,7 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Producer<T, S>>
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Producer<T, S>> Runnable
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>> Runnable
     for ScheduledProducer<T, S, U, V>
 {
     async fn run(&mut self) {
@@ -117,7 +121,11 @@ impl<T: Clone + Send + Sync, S: Send + Sync, U: State<S>, V: Producer<T, S>> Run
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{databus::{MessageHeader, MessageType}, runnable::Runnable};
+    use crate::{
+        message::{MessageHeader, MessageType},
+        runnable::Runnable,
+    };
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
@@ -154,8 +162,8 @@ mod tests {
             (
                 Message {
                     header: MessageHeader {
-                        topic: "request".to_string(),
                         message_type: MessageType::Data,
+                        message_meta: HashMap::new(),
                     },
                     payload: format!("test data {}", old_state + 1),
                 },
@@ -169,19 +177,17 @@ mod tests {
         let bus = Arc::new(DataBus::<String>::new(10));
         let state = TestState::new(0);
 
-        let err = match ScheduledProducer::new(
-            TestProducer,
-            state,
-            bus,
-            String::new(),
-            Schedule::Once,
-        ) {
-            Ok(_) => panic!("expected an empty topic error"),
-            Err(err) => err,
-        };
+        let err =
+            match ScheduledProducer::new(TestProducer, state, bus, String::new(), Schedule::Once) {
+                Ok(_) => panic!("expected an empty topic error"),
+                Err(err) => err,
+            };
 
         assert!(matches!(err, ProducerError::CreationError(_)));
-        assert_eq!(err.to_string(), "Error Creating Producer: Topic cannot be empty");
+        assert_eq!(
+            err.to_string(),
+            "Error Creating Producer: Topic cannot be empty"
+        );
     }
 
     #[tokio::test]

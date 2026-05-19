@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use databus::{
-    databus::{DataBus, Message, MessageHeader, MessageType},
+    databus::DataBus,
+    message::{Message, MessageHeader, MessageType},
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
     runnable::Runnable,
@@ -69,8 +71,8 @@ impl Producer<String, i32> for SequenceProducer {
         (
             Message {
                 header: MessageHeader {
-                    topic: "raw".to_string(),
                     message_type: MessageType::Data,
+                    message_meta: HashMap::new(),
                 },
                 payload: format!("item-{next}"),
             },
@@ -88,8 +90,8 @@ impl Processor<String, i32> for DecoratingProcessor {
         (
             Message {
                 header: MessageHeader {
-                    topic: "processed".to_string(),
                     message_type: MessageType::Data,
+                    message_meta: HashMap::new(),
                 },
                 payload: format!("{}-processed-{next}", message.payload),
             },

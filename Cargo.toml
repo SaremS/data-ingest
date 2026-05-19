@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-    "databus",
+    "crates/databus", "crates/producers",
 ]
 
 resolver = "3"
