@@ -7,11 +7,21 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::{Message, HierarchicalTopic}, runnable::Runnable, state::State};
+use crate::{
+    databus::DataBus,
+    message::{HierarchicalTopic, Message},
+    runnable::Runnable,
+    state::State,
+};
 
 #[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn process(&self, topic: &HierarchicalTopic, message: &Message<T>, old_state: &S) -> (Message<T>, S);
+    async fn process(
+        &self,
+        topic: HierarchicalTopic,
+        message: Message<T>,
+        old_state: S,
+    ) -> (Message<T>, S);
 }
 
 pub struct BusProcessor<
@@ -108,13 +118,14 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
                     match option_msg {
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
-                            let (new_message, new_state) =
-                                self.processor.process(&message.topic, &message, &old_state).await;
+                            let (mut new_message, new_state) =
+                                self.processor.process(message.topic.clone(), message, old_state).await;
+                            new_message.topic = self.output_topic.clone();
                             self.processor_state.set_state(new_state).await;
 
                             if self
                                 .bus
-                                .publish(&self.output_topic, new_message)
+                                .publish(new_message)
                                 .await
                                 .is_err()
                             {
@@ -174,13 +185,12 @@ mod tests {
     impl Processor<String, i32> for MockProcessor {
         async fn process(
             &self,
-            _topic: &HierarchicalTopic,
-            message: &Message<String>,
-            old_state: &i32,
+            _topic: HierarchicalTopic,
+            message: Message<String>,
+            old_state: i32,
         ) -> (Message<String>, i32) {
             let new_state = old_state + 1;
-            let new_msg = message.clone();
-            (new_msg, new_state)
+            (message, new_state)
         }
     }
 
@@ -190,12 +200,12 @@ mod tests {
     impl Processor<String, i32> for SlowProcessor {
         async fn process(
             &self,
-            _topic: &HierarchicalTopic,
-            message: &Message<String>,
-            old_state: &i32,
+            _topic: HierarchicalTopic,
+            message: Message<String>,
+            old_state: i32,
         ) -> (Message<String>, i32) {
             sleep(Duration::from_millis(25)).await;
-            (message.clone(), old_state + 1)
+            (message, old_state + 1)
         }
     }
 
@@ -239,10 +249,6 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
 
-        // Constructing an empty HierarchicalTopic is not possible via the public API
-        // (new() requires a root, from_str() rejects empty strings). The is_empty()
-        // guard in BusProcessor::new is a safety net for callers using internal APIs.
-        // We verify the error variant is correct by constructing one directly.
         let err = BusProcessorError::CreationError("Input topic cannot be empty".into());
         assert!(matches!(err, BusProcessorError::CreationError(_)));
         assert_eq!(
@@ -308,7 +314,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message()).await.unwrap();
+            bus.publish(test_message()).await.unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -384,7 +390,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message()).await.unwrap();
+            bus.publish(test_message()).await.unwrap();
             bus.shutdown();
         };
 

@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
-
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct HierarchicalTopic {
@@ -78,7 +77,6 @@ impl Into<String> for HierarchicalTopic {
         self.to_string()
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageType {

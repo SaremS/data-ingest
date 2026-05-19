@@ -7,7 +7,7 @@ use thiserror::Error;
 use url::Url;
 
 use databus::{
-    message::{Message, MessageBuilder},
+    message::{HierarchicalTopic, Message, MessageBuilder},
     producer::Producer,
 };
 
@@ -127,7 +127,8 @@ impl HtmlListProducer {
 impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
     async fn produce(
         &self,
-        old_state: &HtmlListProducerState,
+        topic: HierarchicalTopic,
+        old_state: HtmlListProducerState,
     ) -> (Message<Bytes>, HtmlListProducerState) {
         let links = self
             .extract_from_url(&self.target_url)
@@ -138,9 +139,9 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
             Ok(l) => l,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                    MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
                     HtmlListProducerState {
-                        last_extracted_url: old_state.last_extracted_url.clone(),
+                        last_extracted_url: old_state.last_extracted_url,
                     },
                 );
             }
@@ -148,9 +149,9 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
 
         if links.is_empty() {
             return (
-                MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
                 HtmlListProducerState {
-                    last_extracted_url: old_state.last_extracted_url.clone(),
+                    last_extracted_url: old_state.last_extracted_url,
                 },
             );
         }
@@ -174,9 +175,9 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
                 Some(l) => l.clone(),
                 None => {
                     return (
-                        MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                        MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
                         HtmlListProducerState {
-                            last_extracted_url: old_state.last_extracted_url.clone(),
+                            last_extracted_url: old_state.last_extracted_url,
                         },
                     );
                 }
@@ -187,9 +188,9 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
             Ok(url) => url,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                    MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
                     HtmlListProducerState {
-                        last_extracted_url: old_state.last_extracted_url.clone(),
+                        last_extracted_url: old_state.last_extracted_url,
                     },
                 );
             }
@@ -200,16 +201,16 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
                 Ok(result) => result,
                 Err(_) => {
                     return (
-                        MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                        MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
                         HtmlListProducerState {
-                            last_extracted_url: old_state.last_extracted_url.clone(),
+                            last_extracted_url: old_state.last_extracted_url,
                         },
                     );
                 }
             };
 
         (
-            MessageBuilder::<Bytes>::new_data(content)
+            MessageBuilder::<Bytes>::new_data(content, topic)
                 .add_meta("filename".to_string(), dataset_name)
                 .build(),
             HtmlListProducerState {

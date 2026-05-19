@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use crate::message::{Message, HierarchicalTopic};
-
-
+use crate::message::{HierarchicalTopic, Message};
 
 pub struct DataBus<T: Clone + Send + Sync> {
     topics: DashMap<HierarchicalTopic, Vec<mpsc::Sender<Message<T>>>>,
@@ -39,15 +37,17 @@ impl<T: Clone + Send + Sync> DataBus<T> {
         Some(rx)
     }
 
-    pub async fn publish(&self, topic: &HierarchicalTopic, message: Message<T>) -> Result<(), &'static str> {
+    pub async fn publish(&self, message: Message<T>) -> Result<(), &'static str> {
         if self.is_closed.load(Ordering::SeqCst) {
             return Err("Bus is closed");
         }
 
+        let topic = message.topic.clone();
+
         let senders = {
             let mut active_senders = Vec::new();
 
-            if let Some(mut subscribers) = self.topics.get_mut(topic) {
+            if let Some(mut subscribers) = self.topics.get_mut(&topic) {
                 subscribers.retain(|tx| !tx.is_closed());
                 active_senders = subscribers.clone();
             }
@@ -56,7 +56,7 @@ impl<T: Clone + Send + Sync> DataBus<T> {
         };
 
         self.topics
-            .remove_if(topic, |_, subscribers| subscribers.is_empty());
+            .remove_if(&topic, |_, subscribers| subscribers.is_empty());
 
         for tx in senders {
             let _ = tx.send(message.clone()).await;
@@ -96,7 +96,7 @@ mod tests {
 
         let mut rx = bus.subscribe(&t).unwrap();
 
-        bus.publish(&t, test_message("Hello, DataBus!", "test_topic"))
+        bus.publish(test_message("Hello, DataBus!", "test_topic"))
             .await
             .unwrap();
 
@@ -117,16 +117,13 @@ mod tests {
         tokio::spawn(async move {
             if let Some(_req) = request_rx.recv().await {
                 bus_clone
-                    .publish(
-                        &topic("response_topic"),
-                        test_message("Response from listener", "response_topic"),
-                    )
+                    .publish(test_message("Response from listener", "response_topic"))
                     .await
                     .unwrap();
             }
         });
 
-        bus.publish(&request_topic, test_message("Request to listener", "request_topic"))
+        bus.publish(test_message("Request to listener", "request_topic"))
             .await
             .unwrap();
 
@@ -146,7 +143,7 @@ mod tests {
         let mut rx2 = bus.subscribe(&t).unwrap();
         let mut rx3 = bus.subscribe(&t).unwrap();
 
-        bus.publish(&t, test_message("test", "global_events"))
+        bus.publish(test_message("test", "global_events"))
             .await
             .unwrap();
 
@@ -165,7 +162,7 @@ mod tests {
             assert!(bus.topics.contains_key(&t));
         }
 
-        bus.publish(&t, test_message("trigger pruning", "temporary_topic"))
+        bus.publish(test_message("trigger pruning", "temporary_topic"))
             .await
             .unwrap();
 
@@ -187,7 +184,7 @@ mod tests {
         assert!(bus.subscribe(&another_topic).is_none());
 
         assert!(
-            bus.publish(&shutdown_topic, test_message("fail", "shutdown_topic"))
+            bus.publish(test_message("fail", "shutdown_topic"))
                 .await
                 .is_err()
         );
@@ -201,7 +198,7 @@ mod tests {
         let missing_topic = topic("missing_topic");
 
         assert!(
-            bus.publish(&missing_topic, test_message("no listeners", "missing_topic"))
+            bus.publish(test_message("no listeners", "missing_topic"))
                 .await
                 .is_ok()
         );

@@ -5,7 +5,12 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::{Message, HierarchicalTopic}, runnable::Runnable, state::State};
+use crate::{
+    databus::DataBus,
+    message::{HierarchicalTopic, Message},
+    runnable::Runnable,
+    state::State,
+};
 
 pub enum Schedule {
     Once,
@@ -32,7 +37,7 @@ pub enum ProducerError {
 
 #[async_trait]
 pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn produce(&self, topic: &HierarchicalTopic,old_state: &S) -> (Message<T>, S);
+    async fn produce(&self, topic: HierarchicalTopic, old_state: S) -> (Message<T>, S);
 }
 
 pub struct ScheduledProducer<
@@ -90,9 +95,9 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T,
                 }
                 should_continue = async {
                     let old_state = self.producer_state.get_state().await;
-                    let (message, new_state) = self.producer.produce(&self.topic, &old_state).await;
+                    let (message, new_state) = self.producer.produce(self.topic.clone(), old_state).await;
 
-                    if let Err(_e) = self.bus.publish(&self.topic, message).await {
+                    if let Err(_e) = self.bus.publish(message).await {
                         return false;
                     }
 
@@ -158,10 +163,14 @@ mod tests {
 
     #[async_trait]
     impl Producer<String, i32> for TestProducer {
-        async fn produce(&self, topic: &HierarchicalTopic, old_state: &i32) -> (Message<String>, i32) {
+        async fn produce(
+            &self,
+            topic: HierarchicalTopic,
+            old_state: i32,
+        ) -> (Message<String>, i32) {
             (
                 Message {
-                    topic: topic.clone(),
+                    topic,
                     header: MessageHeader {
                         message_type: MessageType::Data,
                         message_meta: HashMap::new(),
@@ -196,14 +205,9 @@ mod tests {
         let state = TestState::new(0);
         let state_checker = state.clone();
         let t = topic("test_topic");
-        let mut scheduled_producer = ScheduledProducer::new(
-            TestProducer,
-            state,
-            bus.clone(),
-            t.clone(),
-            Schedule::Once,
-        )
-        .unwrap();
+        let mut scheduled_producer =
+            ScheduledProducer::new(TestProducer, state, bus.clone(), t.clone(), Schedule::Once)
+                .unwrap();
 
         let mut rx = bus.subscribe(&t).unwrap();
 

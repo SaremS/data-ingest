@@ -7,7 +7,12 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::{Message, HierarchicalTopic}, runnable::Runnable, state::State};
+use crate::{
+    databus::DataBus,
+    message::{HierarchicalTopic, Message},
+    runnable::Runnable,
+    state::State,
+};
 
 #[derive(Error, Debug)]
 pub enum BusStorerError {
@@ -23,7 +28,7 @@ pub enum BusStorerError {
 
 #[async_trait]
 pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn store(&self, message: &Message<T>, old_state: &S) -> S;
+    async fn store(&self, message: Message<T>, old_state: S) -> S;
 }
 
 pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>> {
@@ -91,7 +96,7 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
                             let new_state =
-                                self.processor.store(&message, &old_state).await;
+                                self.processor.store(message, old_state).await;
                             self.processor_state.set_state(new_state).await;
                         }
                         None => {
@@ -145,10 +150,9 @@ mod tests {
 
     #[async_trait]
     impl Storer<String, Vec<String>> for MockStorer {
-        async fn store(&self, message: &Message<String>, old_state: &Vec<String>) -> Vec<String> {
-            let mut new_state = old_state.clone();
-            new_state.push(message.payload.clone());
-            new_state
+        async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+            old_state.push(message.payload);
+            old_state
         }
     }
 
@@ -207,9 +211,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message("stored value"))
-                .await
-                .unwrap();
+            bus.publish(test_message("stored value")).await.unwrap();
 
             sleep(Duration::from_millis(25)).await;
             bus.shutdown();
@@ -227,13 +229,8 @@ mod tests {
     async fn test_bus_storer_returns_when_bus_is_closed_before_run() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
-        let mut bus_storer = BusStorer::new(
-            MockStorer,
-            state,
-            bus.clone(),
-            topic("test_input_topic"),
-        )
-        .unwrap();
+        let mut bus_storer =
+            BusStorer::new(MockStorer, state, bus.clone(), topic("test_input_topic")).unwrap();
 
         bus.shutdown();
         bus_storer.run().await;

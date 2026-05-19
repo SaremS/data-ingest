@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType, HierarchicalTopic},
+    message::{HierarchicalTopic, Message, MessageHeader, MessageType},
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
     runnable::Runnable,
@@ -66,11 +66,11 @@ struct SequenceProducer;
 
 #[async_trait]
 impl Producer<String, i32> for SequenceProducer {
-    async fn produce(&self, topic: &HierarchicalTopic, old_state: &i32) -> (Message<String>, i32) {
+    async fn produce(&self, topic: HierarchicalTopic, old_state: i32) -> (Message<String>, i32) {
         let next = old_state + 1;
         (
             Message {
-                topic: topic.clone(),
+                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -88,14 +88,14 @@ struct DecoratingProcessor;
 impl Processor<String, i32> for DecoratingProcessor {
     async fn process(
         &self,
-        _topic: &HierarchicalTopic,
-        message: &Message<String>,
-        old_state: &i32,
+        _topic: HierarchicalTopic,
+        message: Message<String>,
+        old_state: i32,
     ) -> (Message<String>, i32) {
         let next = old_state + 1;
         (
             Message {
-                topic: message.topic.clone(),
+                topic: message.topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -111,10 +111,9 @@ struct CollectingStorer;
 
 #[async_trait]
 impl Storer<String, Vec<String>> for CollectingStorer {
-    async fn store(&self, message: &Message<String>, old_state: &Vec<String>) -> Vec<String> {
-        let mut next = old_state.clone();
-        next.push(message.payload.clone());
-        next
+    async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+        old_state.push(message.payload);
+        old_state
     }
 }
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType, HierarchicalTopic},
+    message::{HierarchicalTopic, Message, MessageHeader, MessageType},
     processor::{BusProcessor, BusProcessorError, Processor},
     producer::{Producer, ProducerError, Schedule, ScheduledProducer},
     state::State,
@@ -64,10 +64,10 @@ struct TestProducer;
 
 #[async_trait]
 impl Producer<String, i32> for TestProducer {
-    async fn produce(&self, topic: &HierarchicalTopic, old_state: &i32) -> (Message<String>, i32) {
+    async fn produce(&self, topic: HierarchicalTopic, old_state: i32) -> (Message<String>, i32) {
         (
             Message {
-                topic: topic.clone(),
+                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -85,13 +85,13 @@ struct TestProcessor;
 impl Processor<String, i32> for TestProcessor {
     async fn process(
         &self,
-        _topic: &HierarchicalTopic,
-        message: &Message<String>,
-        old_state: &i32,
+        _topic: HierarchicalTopic,
+        message: Message<String>,
+        old_state: i32,
     ) -> (Message<String>, i32) {
         (
             Message {
-                topic: message.topic.clone(),
+                topic: message.topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -107,10 +107,9 @@ struct TestStorer;
 
 #[async_trait]
 impl Storer<String, Vec<String>> for TestStorer {
-    async fn store(&self, message: &Message<String>, old_state: &Vec<String>) -> Vec<String> {
-        let mut new_state = old_state.clone();
-        new_state.push(message.payload.clone());
-        new_state
+    async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+        old_state.push(message.payload);
+        old_state
     }
 }
 
@@ -124,17 +123,14 @@ async fn root_exports_support_external_publish_and_subscribe() {
     let t = topic("public-topic");
     let mut rx = bus.subscribe(&t).unwrap();
 
-    bus.publish(
-        &t,
-        Message {
-            topic: t.clone(),
-            header: MessageHeader {
-                message_type: MessageType::Error,
-                message_meta: HashMap::new(),
-            },
-            payload: "from integration test".to_string(),
+    bus.publish(Message {
+        topic: t.clone(),
+        header: MessageHeader {
+            message_type: MessageType::Error,
+            message_meta: HashMap::new(),
         },
-    )
+        payload: "from integration test".to_string(),
+    })
     .await
     .unwrap();
 

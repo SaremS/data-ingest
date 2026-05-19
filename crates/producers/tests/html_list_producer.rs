@@ -6,8 +6,15 @@ use std::{
 };
 
 use bytes::Bytes;
-use databus::{message::MessageType, producer::Producer};
+use databus::{
+    message::{HierarchicalTopic, MessageType},
+    producer::Producer,
+};
 use producers::html_list_producer::{HtmlListProducer, HtmlListProducerState};
+
+fn topic(s: &str) -> HierarchicalTopic {
+    HierarchicalTopic::new(s)
+}
 
 fn listing_page(base_url: &str) -> String {
     format!(
@@ -83,7 +90,7 @@ async fn produce_fetches_first_dataset_and_updates_state() {
         last_extracted_url: None,
     };
 
-    let (message, new_state) = producer.produce(&initial_state).await;
+    let (message, new_state) = producer.produce(topic("html-list"), initial_state).await;
 
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("first-dataset"));
@@ -117,7 +124,7 @@ async fn produce_uses_checkpoint_to_fetch_next_dataset() {
         last_extracted_url: Some(format!("{base_url}/dataset-1.csv")),
     };
 
-    let (message, new_state) = producer.produce(&initial_state).await;
+    let (message, new_state) = producer.produce(topic("html-list"), initial_state).await;
 
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("second-dataset"));
@@ -151,7 +158,7 @@ async fn produce_respects_ingest_from_back() {
         last_extracted_url: None,
     };
 
-    let (message, new_state) = producer.produce(&initial_state).await;
+    let (message, new_state) = producer.produce(topic("html-list"), initial_state).await;
 
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("latest-dataset"));
@@ -180,15 +187,13 @@ async fn produce_returns_empty_when_checkpoint_is_latest_link() {
         last_extracted_url: Some(format!("{base_url}/dataset-2.csv")),
     };
 
-    let (message, new_state) = producer.produce(&initial_state).await;
+    let expected_last_url = initial_state.last_extracted_url.clone();
+    let (message, new_state) = producer.produce(topic("html-list"), initial_state).await;
 
     assert_eq!(message.header.message_type, MessageType::Empty);
     assert_eq!(message.payload, Bytes::new());
     assert!(message.header.message_meta.is_empty());
-    assert_eq!(
-        new_state.last_extracted_url,
-        initial_state.last_extracted_url
-    );
+    assert_eq!(new_state.last_extracted_url, expected_last_url);
 
     server.join().expect("join test server");
 }
