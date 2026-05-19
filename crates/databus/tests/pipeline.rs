@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType},
+    message::{HierarchicalTopic, Message, MessageHeader, MessageType},
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
     runnable::Runnable,
@@ -66,10 +66,11 @@ struct SequenceProducer;
 
 #[async_trait]
 impl Producer<String, i32> for SequenceProducer {
-    async fn produce(&self, old_state: &i32) -> (Message<String>, i32) {
+    async fn produce(&self, topic: HierarchicalTopic, old_state: i32) -> (Message<String>, i32) {
         let next = old_state + 1;
         (
             Message {
+                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -85,10 +86,16 @@ struct DecoratingProcessor;
 
 #[async_trait]
 impl Processor<String, i32> for DecoratingProcessor {
-    async fn process(&self, message: &Message<String>, old_state: &i32) -> (Message<String>, i32) {
+    async fn process(
+        &self,
+        _topic: HierarchicalTopic,
+        message: Message<String>,
+        old_state: i32,
+    ) -> (Message<String>, i32) {
         let next = old_state + 1;
         (
             Message {
+                topic: message.topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -104,11 +111,14 @@ struct CollectingStorer;
 
 #[async_trait]
 impl Storer<String, Vec<String>> for CollectingStorer {
-    async fn store(&self, message: &Message<String>, old_state: &Vec<String>) -> Vec<String> {
-        let mut next = old_state.clone();
-        next.push(message.payload.clone());
-        next
+    async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+        old_state.push(message.payload);
+        old_state
     }
+}
+
+fn topic(s: &str) -> HierarchicalTopic {
+    HierarchicalTopic::new(s)
 }
 
 #[tokio::test]
@@ -118,11 +128,14 @@ async fn producer_processor_and_storer_work_together() {
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
 
+    let raw_topic = topic("raw");
+    let processed_topic = topic("processed");
+
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
         producer_state.clone(),
         bus.clone(),
-        "raw".to_string(),
+        raw_topic.clone(),
         Schedule::Once,
     )
     .unwrap();
@@ -131,8 +144,8 @@ async fn producer_processor_and_storer_work_together() {
         DecoratingProcessor,
         processor_state.clone(),
         bus.clone(),
-        "raw".to_string(),
-        "processed".to_string(),
+        raw_topic,
+        processed_topic.clone(),
     )
     .unwrap();
 
@@ -140,11 +153,11 @@ async fn producer_processor_and_storer_work_together() {
         CollectingStorer,
         storer_state.clone(),
         bus.clone(),
-        "processed".to_string(),
+        processed_topic.clone(),
     )
     .unwrap();
 
-    let mut processed_rx = bus.subscribe("processed").unwrap();
+    let mut processed_rx = bus.subscribe(&processed_topic).unwrap();
 
     let processor_worker = async {
         processor.run().await;

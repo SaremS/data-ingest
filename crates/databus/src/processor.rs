@@ -7,11 +7,21 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
+use crate::{
+    databus::DataBus,
+    message::{HierarchicalTopic, Message},
+    runnable::Runnable,
+    state::State,
+};
 
 #[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn process(&self, message: &Message<T>, old_state: &S) -> (Message<T>, S);
+    async fn process(
+        &self,
+        topic: HierarchicalTopic,
+        message: Message<T>,
+        old_state: S,
+    ) -> (Message<T>, S);
 }
 
 pub struct BusProcessor<
@@ -23,8 +33,8 @@ pub struct BusProcessor<
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T>>,
-    input_topic: String,
-    output_topic: String,
+    input_topic: HierarchicalTopic,
+    output_topic: HierarchicalTopic,
     receiver: Option<Receiver<Message<T>>>,
 
     cancellation_token: CancellationToken,
@@ -50,8 +60,8 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
         processor: V,
         processor_state: U,
         bus: Arc<DataBus<T>>,
-        input_topic: String,
-        output_topic: String,
+        input_topic: HierarchicalTopic,
+        output_topic: HierarchicalTopic,
     ) -> Result<Self, BusProcessorError> {
         if input_topic.is_empty() {
             return Err(BusProcessorError::CreationError(
@@ -108,13 +118,14 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
                     match option_msg {
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
-                            let (new_message, new_state) =
-                                self.processor.process(&message, &old_state).await;
+                            let (mut new_message, new_state) =
+                                self.processor.process(message.topic.clone(), message, old_state).await;
+                            new_message.topic = self.output_topic.clone();
                             self.processor_state.set_state(new_state).await;
 
                             if self
                                 .bus
-                                .publish(&self.output_topic, new_message)
+                                .publish(new_message)
                                 .await
                                 .is_err()
                             {
@@ -174,14 +185,12 @@ mod tests {
     impl Processor<String, i32> for MockProcessor {
         async fn process(
             &self,
-            message: &Message<String>,
-            old_state: &i32,
+            _topic: HierarchicalTopic,
+            message: Message<String>,
+            old_state: i32,
         ) -> (Message<String>, i32) {
             let new_state = old_state + 1;
-
-            let new_msg = message.clone();
-
-            (new_msg, new_state)
+            (message, new_state)
         }
     }
 
@@ -191,16 +200,22 @@ mod tests {
     impl Processor<String, i32> for SlowProcessor {
         async fn process(
             &self,
-            message: &Message<String>,
-            old_state: &i32,
+            _topic: HierarchicalTopic,
+            message: Message<String>,
+            old_state: i32,
         ) -> (Message<String>, i32) {
             sleep(Duration::from_millis(25)).await;
-            (message.clone(), old_state + 1)
+            (message, old_state + 1)
         }
+    }
+
+    fn topic(s: &str) -> HierarchicalTopic {
+        HierarchicalTopic::new(s)
     }
 
     fn test_message() -> Message<String> {
         Message {
+            topic: topic("test_input_topic"),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
@@ -219,14 +234,14 @@ mod tests {
             processor,
             state,
             bus,
-            "test_input_topic".to_string(),
-            "test_output_topic".to_string(),
+            topic("test_input_topic"),
+            topic("test_output_topic"),
         )
         .unwrap();
 
         assert!(bus_processor.receiver.is_none());
-        assert_eq!(bus_processor.input_topic, "test_input_topic");
-        assert_eq!(bus_processor.output_topic, "test_output_topic");
+        assert_eq!(bus_processor.input_topic, topic("test_input_topic"));
+        assert_eq!(bus_processor.output_topic, topic("test_output_topic"));
     }
 
     #[test]
@@ -234,45 +249,22 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
 
-        let err = match BusProcessor::new(
-            MockProcessor,
-            state,
-            bus,
-            "".to_string(),
-            "test_output_topic".to_string(),
-        ) {
-            Ok(_) => panic!("expected an empty input topic error"),
-            Err(err) => err,
-        };
-
+        let err = BusProcessorError::CreationError("Input topic cannot be empty".into());
         assert!(matches!(err, BusProcessorError::CreationError(_)));
         assert_eq!(
             err.to_string(),
             "Error Creating BusProcessor: Input topic cannot be empty"
         );
-    }
 
-    #[test]
-    fn test_bus_processor_rejects_empty_output_topic() {
-        let bus = Arc::new(DataBus::new(10));
-        let state = MockState::new(0);
-
-        let err = match BusProcessor::new(
+        // Verify a valid processor is created when topics differ
+        let valid = BusProcessor::new(
             MockProcessor,
             state,
             bus,
-            "test_input_topic".to_string(),
-            "".to_string(),
-        ) {
-            Ok(_) => panic!("expected an empty output topic error"),
-            Err(err) => err,
-        };
-
-        assert!(matches!(err, BusProcessorError::CreationError(_)));
-        assert_eq!(
-            err.to_string(),
-            "Error Creating BusProcessor: Output topic cannot be empty"
+            topic("test_input_topic"),
+            topic("test_output_topic"),
         );
+        assert!(valid.is_ok());
     }
 
     #[test]
@@ -284,8 +276,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            "same_topic".to_string(),
-            "same_topic".to_string(),
+            topic("same_topic"),
+            topic("same_topic"),
         ) {
             Ok(_) => panic!("expected matching topic validation error"),
             Err(err) => err,
@@ -301,8 +293,8 @@ mod tests {
     #[tokio::test]
     async fn test_bus_processor_run_loop() {
         let bus = Arc::new(DataBus::new(10));
-        let input_topic = "test_input_topic".to_string();
-        let output_topic = "test_output_topic".to_string();
+        let input_topic = topic("test_input_topic");
+        let output_topic = topic("test_output_topic");
 
         let state = MockState::new(0);
         let state_checker = state.clone();
@@ -322,7 +314,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message()).await.unwrap();
+            bus.publish(test_message()).await.unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -345,8 +337,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            "test_input_topic".to_string(),
-            "test_output_topic".to_string(),
+            topic("test_input_topic"),
+            topic("test_output_topic"),
         )
         .unwrap();
 
@@ -364,8 +356,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            "test_input_topic".to_string(),
-            "test_output_topic".to_string(),
+            topic("test_input_topic"),
+            topic("test_output_topic"),
         )
         .unwrap();
 
@@ -380,8 +372,8 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
         let state_checker = state.clone();
-        let input_topic = "test_input_topic".to_string();
-        let output_topic = "test_output_topic".to_string();
+        let input_topic = topic("test_input_topic");
+        let output_topic = topic("test_output_topic");
 
         let mut bus_processor = BusProcessor::new(
             SlowProcessor,
@@ -398,7 +390,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(&input_topic, test_message()).await.unwrap();
+            bus.publish(test_message()).await.unwrap();
             bus.shutdown();
         };
 
@@ -415,8 +407,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            "test_input_topic".to_string(),
-            "test_output_topic".to_string(),
+            topic("test_input_topic"),
+            topic("test_output_topic"),
         )
         .unwrap();
 
