@@ -225,7 +225,7 @@ mod tests {
     use url::Url;
 
     #[test]
-    fn test_extract_private_method() {
+    fn test_extract_returns_matching_links_only() {
         let producer = HtmlListProducer::new(
             "https://example.com",
             "ul.list-class",
@@ -253,5 +253,121 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], "/page1");
         assert_eq!(results[1], "/page2");
+    }
+
+    #[test]
+    fn test_extract_skips_elements_without_href() {
+        let producer = HtmlListProducer::new(
+            "https://example.com",
+            "ul.list-class",
+            "a.link-class",
+            false,
+        )
+        .unwrap();
+
+        let mock_html = r#"
+            <html>
+                <body>
+                    <ul class="list-class">
+                        <li><a class="link-class">Missing href</a></li>
+                        <li><a class="link-class" href="/page2">Two</a></li>
+                    </ul>
+                </body>
+            </html>
+        "#;
+
+        let results = producer.extract(mock_html);
+
+        assert_eq!(results, vec!["/page2".to_string()]);
+    }
+
+    #[test]
+    fn test_new_rejects_invalid_target_url() {
+        let error = match HtmlListProducer::new("not-a-url", "ul.list-class", "a.link-class", false)
+        {
+            Ok(_) => panic!("expected invalid URL"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HtmlListProducerError::CreationError(_)));
+        assert!(error.to_string().contains("Invalid target URL 'not-a-url'"));
+    }
+
+    #[test]
+    fn test_new_rejects_invalid_tree_path_selector() {
+        let error = match HtmlListProducer::new(
+            "https://example.com",
+            "ul.list-class[",
+            "a.link-class",
+            false,
+        ) {
+            Ok(_) => panic!("expected invalid tree selector"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HtmlListProducerError::CreationError(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid tree path selector 'ul.list-class['")
+        );
+    }
+
+    #[test]
+    fn test_new_rejects_invalid_sub_path_selector() {
+        let error = match HtmlListProducer::new(
+            "https://example.com",
+            "ul.list-class",
+            "a.link-class[",
+            false,
+        ) {
+            Ok(_) => panic!("expected invalid sub-path selector"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HtmlListProducerError::CreationError(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid URL path selector 'a.link-class['")
+        );
+    }
+
+    #[test]
+    fn test_get_filename_from_url_returns_last_path_segment() {
+        let producer = HtmlListProducer::new(
+            "https://example.com",
+            "ul.list-class",
+            "a.link-class",
+            false,
+        )
+        .unwrap();
+        let url = Url::parse("https://example.com/datasets/report.csv").unwrap();
+
+        let filename = producer.get_filename_from_url(&url).unwrap();
+
+        assert_eq!(filename, "report.csv");
+    }
+
+    #[test]
+    fn test_get_filename_from_url_rejects_urls_without_path_segments() {
+        let producer = HtmlListProducer::new(
+            "https://example.com",
+            "ul.list-class",
+            "a.link-class",
+            false,
+        )
+        .unwrap();
+        let url = Url::parse("mailto:test@example.com").unwrap();
+
+        let error = producer
+            .get_filename_from_url(&url)
+            .expect_err("expected filename extraction to fail");
+
+        assert!(matches!(error, HtmlListProducerError::ExtractError(_)));
+        assert_eq!(
+            error.to_string(),
+            "Failed to extract data: Failed to extract dataset name from URL"
+        );
     }
 }

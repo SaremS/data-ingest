@@ -70,6 +70,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use crate::message::{MessageHeader, MessageType};
+
     #[tokio::test]
     async fn test_data_bus() {
         let bus = DataBus::<String>::new(10);
