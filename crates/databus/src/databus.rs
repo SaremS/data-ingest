@@ -3,10 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use crate::message::Message;
+use crate::message::{Message, HierarchicalTopic};
+
+
 
 pub struct DataBus<T: Clone + Send + Sync> {
-    topics: DashMap<String, Vec<mpsc::Sender<Message<T>>>>,
+    topics: DashMap<HierarchicalTopic, Vec<mpsc::Sender<Message<T>>>>,
     channel_capacity: usize,
     is_closed: AtomicBool,
 }
@@ -25,19 +27,19 @@ impl<T: Clone + Send + Sync> DataBus<T> {
         self.topics.clear();
     }
 
-    pub fn subscribe(&self, topic: &str) -> Option<mpsc::Receiver<Message<T>>> {
+    pub fn subscribe(&self, topic: &HierarchicalTopic) -> Option<mpsc::Receiver<Message<T>>> {
         if self.is_closed.load(Ordering::SeqCst) {
             return None;
         }
 
         let (tx, rx) = mpsc::channel(self.channel_capacity);
 
-        self.topics.entry(topic.to_string()).or_default().push(tx);
+        self.topics.entry(topic.clone()).or_default().push(tx);
 
         Some(rx)
     }
 
-    pub async fn publish(&self, topic: &str, message: Message<T>) -> Result<(), &'static str> {
+    pub async fn publish(&self, topic: &HierarchicalTopic, message: Message<T>) -> Result<(), &'static str> {
         if self.is_closed.load(Ordering::SeqCst) {
             return Err("Bus is closed");
         }
@@ -72,21 +74,31 @@ mod tests {
 
     use crate::message::{MessageHeader, MessageType};
 
-    #[tokio::test]
-    async fn test_data_bus() {
-        let bus = DataBus::<String>::new(10);
+    fn topic(s: &str) -> HierarchicalTopic {
+        HierarchicalTopic::new(s)
+    }
 
-        let mut rx = bus.subscribe("test_topic").unwrap();
-
-        let message = Message {
+    fn test_message(payload: impl Into<String>, t: &str) -> Message<String> {
+        Message {
+            topic: topic(t),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
             },
-            payload: "Hello, DataBus!".into(),
-        };
+            payload: payload.into(),
+        }
+    }
 
-        bus.publish("test_topic", message).await.unwrap();
+    #[tokio::test]
+    async fn test_data_bus() {
+        let bus = DataBus::<String>::new(10);
+        let t = topic("test_topic");
+
+        let mut rx = bus.subscribe(&t).unwrap();
+
+        bus.publish(&t, test_message("Hello, DataBus!", "test_topic"))
+            .await
+            .unwrap();
 
         let received = rx.recv().await.expect("Failed to receive message");
         assert_eq!(received.payload, "Hello, DataBus!");
@@ -95,36 +107,28 @@ mod tests {
     #[tokio::test]
     async fn test_responding_listener() {
         let bus = Arc::new(DataBus::<String>::new(10));
+        let request_topic = topic("request_topic");
+        let response_topic = topic("response_topic");
 
-        let mut request_rx = bus.subscribe("request_topic").unwrap();
-        let mut response_rx = bus.subscribe("response_topic").unwrap();
+        let mut request_rx = bus.subscribe(&request_topic).unwrap();
+        let mut response_rx = bus.subscribe(&response_topic).unwrap();
 
         let bus_clone = bus.clone();
         tokio::spawn(async move {
             if let Some(_req) = request_rx.recv().await {
-                let response_data = Message {
-                    header: MessageHeader {
-                        message_type: MessageType::Data,
-                        message_meta: HashMap::new(),
-                    },
-                    payload: "Response from listener".into(),
-                };
-
                 bus_clone
-                    .publish("response_topic", response_data)
+                    .publish(
+                        &topic("response_topic"),
+                        test_message("Response from listener", "response_topic"),
+                    )
                     .await
                     .unwrap();
             }
         });
 
-        let request_message = Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: HashMap::new(),
-            },
-            payload: "Request to listener".into(),
-        };
-        bus.publish("request_topic", request_message).await.unwrap();
+        bus.publish(&request_topic, test_message("Request to listener", "request_topic"))
+            .await
+            .unwrap();
 
         let received = response_rx
             .recv()
@@ -136,19 +140,15 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_listeners() {
         let bus = Arc::new(DataBus::<String>::new(10));
+        let t = topic("global_events");
 
-        let mut rx1 = bus.subscribe("global_events").unwrap();
-        let mut rx2 = bus.subscribe("global_events").unwrap();
-        let mut rx3 = bus.subscribe("global_events").unwrap();
+        let mut rx1 = bus.subscribe(&t).unwrap();
+        let mut rx2 = bus.subscribe(&t).unwrap();
+        let mut rx3 = bus.subscribe(&t).unwrap();
 
-        let msg = Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: HashMap::new(),
-            },
-            payload: "test".to_string(),
-        };
-        bus.publish("global_events", msg).await.unwrap();
+        bus.publish(&t, test_message("test", "global_events"))
+            .await
+            .unwrap();
 
         assert_eq!(rx1.recv().await.unwrap().payload, "test");
         assert_eq!(rx2.recv().await.unwrap().payload, "test");
@@ -158,24 +158,19 @@ mod tests {
     #[tokio::test]
     async fn test_topic_pruning() {
         let bus = DataBus::<String>::new(10);
+        let t = topic("temporary_topic");
 
         {
-            let _rx = bus.subscribe("temporary_topic").unwrap();
-            assert!(bus.topics.contains_key("temporary_topic"));
+            let _rx = bus.subscribe(&t).unwrap();
+            assert!(bus.topics.contains_key(&t));
         }
 
-        let msg = Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: HashMap::new(),
-            },
-            payload: "trigger pruning".to_string(),
-        };
-
-        bus.publish("temporary_topic", msg).await.unwrap();
+        bus.publish(&t, test_message("trigger pruning", "temporary_topic"))
+            .await
+            .unwrap();
 
         assert!(
-            !bus.topics.contains_key("temporary_topic"),
+            !bus.topics.contains_key(&t),
             "Topic should have been pruned"
         );
     }
@@ -183,20 +178,19 @@ mod tests {
     #[tokio::test]
     async fn test_graceful_shutdown() {
         let bus = DataBus::<String>::new(10);
-        let mut rx = bus.subscribe("shutdown_topic").unwrap();
+        let shutdown_topic = topic("shutdown_topic");
+        let another_topic = topic("another_topic");
+        let mut rx = bus.subscribe(&shutdown_topic).unwrap();
 
         bus.shutdown();
 
-        assert!(bus.subscribe("another_topic").is_none());
+        assert!(bus.subscribe(&another_topic).is_none());
 
-        let msg = Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: HashMap::new(),
-            },
-            payload: "fail".to_string(),
-        };
-        assert!(bus.publish("shutdown_topic", msg).await.is_err());
+        assert!(
+            bus.publish(&shutdown_topic, test_message("fail", "shutdown_topic"))
+                .await
+                .is_err()
+        );
 
         assert!(rx.recv().await.is_none());
     }
@@ -204,16 +198,13 @@ mod tests {
     #[tokio::test]
     async fn test_publish_without_subscribers_is_ok() {
         let bus = DataBus::<String>::new(10);
+        let missing_topic = topic("missing_topic");
 
-        let msg = Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: HashMap::new(),
-            },
-            payload: "no listeners".to_string(),
-        };
-
-        assert!(bus.publish("missing_topic", msg).await.is_ok());
-        assert!(!bus.topics.contains_key("missing_topic"));
+        assert!(
+            bus.publish(&missing_topic, test_message("no listeners", "missing_topic"))
+                .await
+                .is_ok()
+        );
+        assert!(!bus.topics.contains_key(&missing_topic));
     }
 }
