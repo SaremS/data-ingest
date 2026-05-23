@@ -1,2 +1,3 @@
 pub mod hierarchical_index;
-pub mod hierarchical_topic;
+pub mod trie_index_internal;
+pub mod trie_index;

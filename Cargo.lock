@@ -1710,6 +1710,7 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
