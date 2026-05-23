@@ -9,6 +9,14 @@ pub struct TrieIndexInternal<T: Clone, const VEC_CAP: usize, const STR_CAP: usiz
     value: Option<T>,
 }
 
+impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> Default
+    for TrieIndexInternal<T, VEC_CAP, STR_CAP>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndexInternal<T, VEC_CAP, STR_CAP> {
     pub fn new() -> Self {
         TrieIndexInternal {
@@ -52,9 +60,8 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndexInternal<T, 
             found.append(&mut part_found.into_iter().collect());
 
             if found.is_empty() {
-                match &self.value {
-                    Some(v) => results.push(v.clone()),
-                    None => (),
+                if let Some(v) = &self.value {
+                    results.push(v.clone())
                 }
                 return results;
             }
@@ -67,14 +74,14 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndexInternal<T, 
             results.push(value.clone());
         }
 
-        return results;
+        results
     }
 
     pub fn get_at_index(&self, topic: &HierarchicalTopic<VEC_CAP, STR_CAP>) -> Vec<T> {
         let parts = topic.parts_as_strings();
         let parts_deque: VecDeque<String> = VecDeque::from(parts);
 
-        return self.get_next(parts_deque);
+        self.get_next(parts_deque)
     }
 
     pub fn clear(&mut self) {
@@ -92,11 +99,12 @@ mod tests {
         let mut trie_index = TrieIndexInternal::<String, 3, 3>::new();
 
         trie_index.insert_and_set_at_index(
-            HierarchicalIndex::<3, 3>::from_str("a.b.c").unwrap(),
+            &HierarchicalIndex::<3, 3>::from_str("a.b.c").unwrap(),
             "value1".to_string(),
         );
 
-        let result = trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
+        let result =
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
         assert_eq!(result, vec!["value1".to_string()]);
     }
 
@@ -105,23 +113,24 @@ mod tests {
         let mut trie_index = TrieIndexInternal::<String, 3, 3>::new();
 
         trie_index.insert_and_set_at_index(
-            HierarchicalIndex::<3, 3>::from_str("a.*.c").unwrap(),
+            &HierarchicalIndex::<3, 3>::from_str("a.*.c").unwrap(),
             "value1".to_string(),
         );
 
-        let result = trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
+        let result =
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
         assert_eq!(result, vec!["value1".to_string()]);
 
         let result_nomatch =
-            trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b.d").unwrap());
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a.b.d").unwrap());
         assert_eq!(result_nomatch.len(), 0);
 
         let result_nomatch_too_short =
-            trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b").unwrap());
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a.b").unwrap());
         assert_eq!(result_nomatch_too_short.len(), 0);
 
         let result_nomatch_too_short2 =
-            trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a").unwrap());
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a").unwrap());
         assert_eq!(result_nomatch_too_short2.len(), 0);
     }
 
@@ -130,21 +139,22 @@ mod tests {
         let mut trie_index = TrieIndexInternal::<String, 3, 3>::new();
 
         trie_index.insert_and_set_at_index(
-            HierarchicalIndex::<3, 3>::from_str("a.b.c").unwrap(),
+            &HierarchicalIndex::<3, 3>::from_str("a.b.c").unwrap(),
             "value1".to_string(),
         );
         trie_index.insert_and_set_at_index(
-            HierarchicalIndex::<3, 3>::from_str("a.b.*").unwrap(),
+            &HierarchicalIndex::<3, 3>::from_str("a.b.*").unwrap(),
             "value1".to_string(),
         );
         trie_index.insert_and_set_at_index(
-            HierarchicalIndex::<3, 3>::from_str("a.*.*").unwrap(),
+            &HierarchicalIndex::<3, 3>::from_str("a.*.*").unwrap(),
             "value1".to_string(),
         );
 
         trie_index.clear();
 
-        let result = trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
+        let result =
+            trie_index.get_at_index(&HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
         assert_eq!(result.len(), 0);
     }
 }

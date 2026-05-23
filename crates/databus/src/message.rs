@@ -2,19 +2,15 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use arrayvec::ArrayVec;
 use thiserror::Error;
 
-use trie::hierarchical_index::{
-    HierarchicalTopic, HierarchicalTopicError
-};
+use trie::hierarchical_index::{HierarchicalTopic, HierarchicalTopicError};
 
 #[derive(Error, Debug)]
 pub enum MessageError {
     #[error("Invalid topic: {0}")]
     CreationError(Cow<'static, str>),
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageType {
@@ -43,20 +39,25 @@ pub struct MessageBuilder<T: Clone + Send + Sync, const VEC_CAP: usize, const ST
     payload: T,
 }
 
-impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> MessageBuilder<T, VEC_CAP, STR_CAP> {
+impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
+    MessageBuilder<T, VEC_CAP, STR_CAP>
+{
     fn new(payload: T, message_type: MessageType, topic_root: &str) -> Result<Self, MessageError> {
-        let topic = HierarchicalTopic::new(topic_root)
-            .map_err(|e| MessageError::CreationError(format!("Invalid topic root '{}': {}", topic_root, e).into()))?;
+        let topic = HierarchicalTopic::new(topic_root).map_err(|e| {
+            MessageError::CreationError(
+                format!("Invalid topic root '{}': {}", topic_root, e).into(),
+            )
+        })?;
 
-        Self {
+        Ok(Self {
             topic,
             message_type,
             message_meta: HashMap::new(),
             payload,
-        }
+        })
     }
 
-    pub fn new_from_message(message: Message<T>) -> Self {
+    pub fn new_from_message(message: Message<T, VEC_CAP, STR_CAP>) -> Self {
         Self {
             topic: message.topic,
             message_type: message.header.message_type,
@@ -65,15 +66,15 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> Message
         }
     }
 
-    pub fn new_data(payload: T, topic_root: &str) -> Self {
+    pub fn new_data(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Data, topic_root)
     }
 
-    pub fn new_empty(payload: T, topic_root: &str) -> Self {
+    pub fn new_empty(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Empty, topic_root)
     }
 
-    pub fn new_error(payload: T, topic_root: &str) -> Self {
+    pub fn new_error(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Error, topic_root)
     }
 
@@ -87,7 +88,7 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> Message
         Ok(self)
     }
 
-    pub fn build(self) -> Message<T> {
+    pub fn build(self) -> Message<T, VEC_CAP, STR_CAP> {
         Message {
             topic: self.topic,
             header: MessageHeader {

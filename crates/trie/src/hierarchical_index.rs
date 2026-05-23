@@ -114,11 +114,11 @@ impl<const VEC_CAP: usize, const STR_CAP: usize> Debug for HierarchicalTopic<VEC
     }
 }
 
-impl<const VEC_CAP: usize, const STR_CAP: usize> Into<String>
-    for HierarchicalTopic<VEC_CAP, STR_CAP>
+impl<const VEC_CAP: usize, const STR_CAP: usize> From<HierarchicalTopic<VEC_CAP, STR_CAP>>
+    for String
 {
-    fn into(self) -> String {
-        self.to_string()
+    fn from(val: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
+        val.to_string()
     }
 }
 
@@ -155,9 +155,9 @@ impl<const CAP: usize> Debug for IndexLevel<CAP> {
     }
 }
 
-impl<const CAP: usize> Into<String> for IndexLevel<CAP> {
-    fn into(self) -> String {
-        match self {
+impl<const CAP: usize> From<IndexLevel<CAP>> for String {
+    fn from(val: IndexLevel<CAP>) -> Self {
+        match val {
             IndexLevel::String(s) => s.as_str().to_string(),
             IndexLevel::Wildcard => "*".to_string(),
         }
@@ -193,7 +193,7 @@ impl<const VEC_CAP: usize, const STR_CAP: usize> HierarchicalIndex<VEC_CAP, STR_
         let root = IndexLevel::<STR_CAP>::from_str(root)
             .map_err(|_| HierarchicalIndexError::PartCapacityExceeded)?;
 
-        index_parts.push(root.into());
+        index_parts.push(root);
         Ok(Self { index_parts })
     }
 
@@ -206,6 +206,25 @@ impl<const VEC_CAP: usize, const STR_CAP: usize> HierarchicalIndex<VEC_CAP, STR_
             return true;
         }
         false
+    }
+
+    pub fn matches_topic(&self, topic: &HierarchicalTopic<VEC_CAP, STR_CAP>) -> bool {
+        let index_len = self.index_parts.len();
+
+        for i in 0..index_len {
+            let index_part = &self.index_parts[i];
+            let topic_part = &topic.topic_parts[i];
+
+            match index_part {
+                IndexLevel::String(s) => {
+                    if s.as_str() != topic_part.as_str() {
+                        return false;
+                    }
+                }
+                IndexLevel::Wildcard => continue,
+            }
+        }
+        true
     }
 
     pub fn add_part(&mut self, part: &str) -> Result<(), HierarchicalIndexError> {
@@ -282,11 +301,11 @@ impl<const VEC_CAP: usize, const STR_CAP: usize> Debug for HierarchicalIndex<VEC
     }
 }
 
-impl<const VEC_CAP: usize, const STR_CAP: usize> Into<String>
-    for HierarchicalIndex<VEC_CAP, STR_CAP>
+impl<const VEC_CAP: usize, const STR_CAP: usize> From<HierarchicalIndex<VEC_CAP, STR_CAP>>
+    for String
 {
-    fn into(self) -> String {
-        self.to_string()
+    fn from(val: HierarchicalIndex<VEC_CAP, STR_CAP>) -> Self {
+        val.to_string()
     }
 }
 
@@ -362,5 +381,17 @@ mod tests {
 
         assert_eq!(index1, index2);
         assert_ne!(index1, index3);
+    }
+
+    #[test]
+    fn test_hierarchical_index_matches_topic() {
+        let index = HierarchicalIndex::<3, 12>::from_str("root.*.a").unwrap();
+        let topic1 = HierarchicalTopic::<3, 12>::from_str("root.child.a").unwrap();
+        let topic2 = HierarchicalTopic::<3, 12>::from_str("root.child.b").unwrap();
+        let topic3 = HierarchicalTopic::<3, 12>::from_str("root.child.extra").unwrap();
+
+        assert!(index.matches_topic(&topic1));
+        assert!(!index.matches_topic(&topic2));
+        assert!(!index.matches_topic(&topic3));
     }
 }

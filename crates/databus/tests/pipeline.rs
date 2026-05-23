@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{HierarchicalTopic, Message, MessageHeader, MessageType},
+    message::{Message, MessageHeader, MessageType},
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
     runnable::Runnable,
@@ -13,6 +13,10 @@ use databus::{
 };
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep, timeout};
+use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
+
+const VEC_CAP: usize = 4;
+const STR_CAP: usize = 32;
 
 #[derive(Clone)]
 struct CounterState {
@@ -65,8 +69,12 @@ impl State<Vec<String>> for CollectedState {
 struct SequenceProducer;
 
 #[async_trait]
-impl Producer<String, i32> for SequenceProducer {
-    async fn produce(&self, topic: HierarchicalTopic, old_state: i32) -> (Message<String>, i32) {
+impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
+    async fn produce(
+        &self,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        old_state: i32,
+    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
         let next = old_state + 1;
         (
             Message {
@@ -85,13 +93,13 @@ impl Producer<String, i32> for SequenceProducer {
 struct DecoratingProcessor;
 
 #[async_trait]
-impl Processor<String, i32> for DecoratingProcessor {
+impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
-        _topic: HierarchicalTopic,
-        message: Message<String>,
+        _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        message: Message<String, VEC_CAP, STR_CAP>,
         old_state: i32,
-    ) -> (Message<String>, i32) {
+    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
         let next = old_state + 1;
         (
             Message {
@@ -110,26 +118,34 @@ impl Processor<String, i32> for DecoratingProcessor {
 struct CollectingStorer;
 
 #[async_trait]
-impl Storer<String, Vec<String>> for CollectingStorer {
-    async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for CollectingStorer {
+    async fn store(
+        &self,
+        message: Message<String, VEC_CAP, STR_CAP>,
+        mut old_state: Vec<String>,
+    ) -> Vec<String> {
         old_state.push(message.payload);
         old_state
     }
 }
 
-fn topic(s: &str) -> HierarchicalTopic {
-    HierarchicalTopic::new(s)
+fn topic(s: &str) -> HierarchicalTopic<VEC_CAP, STR_CAP> {
+    HierarchicalTopic::from_str(s).unwrap()
+}
+
+fn index(s: &str) -> HierarchicalIndex<VEC_CAP, STR_CAP> {
+    HierarchicalIndex::from_str(s).unwrap()
 }
 
 #[tokio::test]
 async fn producer_processor_and_storer_work_together() {
-    let bus = Arc::new(DataBus::<String>::new(8));
+    let bus = Arc::new(DataBus::<String, VEC_CAP, STR_CAP>::new(8));
     let producer_state = CounterState::new(0);
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
 
-    let raw_topic = topic("raw");
-    let processed_topic = topic("processed");
+    let raw_topic = topic("raw.one");
+    let processed_topic = topic("processed.one");
 
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
@@ -144,7 +160,7 @@ async fn producer_processor_and_storer_work_together() {
         DecoratingProcessor,
         processor_state.clone(),
         bus.clone(),
-        raw_topic,
+        index("raw.one"),
         processed_topic.clone(),
     )
     .unwrap();
@@ -153,11 +169,11 @@ async fn producer_processor_and_storer_work_together() {
         CollectingStorer,
         storer_state.clone(),
         bus.clone(),
-        processed_topic.clone(),
+        index("processed.*"),
     )
     .unwrap();
 
-    let mut processed_rx = bus.subscribe(&processed_topic).unwrap();
+    let mut processed_rx = bus.subscribe(&index("processed.one")).unwrap();
 
     let processor_worker = async {
         processor.run().await;

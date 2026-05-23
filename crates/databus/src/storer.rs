@@ -7,14 +7,9 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use trie::hierarchical_index::HierarchicalTopic;
+use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
 
-use crate::{
-    databus::DataBus,
-    message::Message,
-    runnable::Runnable,
-    state::State,
-};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 #[derive(Error, Debug)]
 pub enum BusStorerError {
@@ -29,31 +24,50 @@ pub enum BusStorerError {
 }
 
 #[async_trait]
-pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>: Send + Sync {
+pub trait Storer<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+>: Send + Sync
+{
     async fn store(&self, message: Message<T, VEC_CAP, STR_CAP>, old_state: S) -> S;
 }
 
-pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> {
+pub struct BusStorer<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Storer<T, S, VEC_CAP, STR_CAP>,
+> {
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-    input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
     receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize>
-    BusStorer<T, S, U, V, VEC_CAP, STR_CAP>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Storer<T, S, VEC_CAP, STR_CAP>,
+> BusStorer<T, S, U, VEC_CAP, STR_CAP, V>
 {
     pub fn new(
         processor: V,
         processor_state: U,
         bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-        input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
     ) -> Result<Self, BusStorerError> {
-        if input_topic.is_empty() {
+        if input_index.is_empty() {
             return Err(BusStorerError::CreationError(
                 "Input topic cannot be empty".into(),
             ));
@@ -63,7 +77,7 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S
             processor,
             processor_state,
             bus,
-            input_topic,
+            input_index,
             receiver: None,
 
             cancellation_token: CancellationToken::new(),
@@ -73,12 +87,18 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> Runnable
-    for BusStorer<T, S, U, V, VEC_CAP, STR_CAP>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Storer<T, S, VEC_CAP, STR_CAP>,
+> Runnable for BusStorer<T, S, U, VEC_CAP, STR_CAP, V>
 {
     async fn run(&mut self) {
         if self.receiver.is_none() {
-            if let Some(rx) = self.bus.subscribe(&self.input_topic) {
+            if let Some(rx) = self.bus.subscribe(&self.input_index) {
                 self.receiver = Some(rx);
             } else {
                 return;
@@ -151,20 +171,28 @@ mod tests {
     struct MockStorer;
 
     #[async_trait]
-    impl Storer<String, Vec<String>> for MockStorer {
-        async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+    impl Storer<String, Vec<String>, 3, 10> for MockStorer {
+        async fn store(
+            &self,
+            message: Message<String, 3, 10>,
+            mut old_state: Vec<String>,
+        ) -> Vec<String> {
             old_state.push(message.payload);
             old_state
         }
     }
 
-    fn topic(s: &str) -> HierarchicalTopic {
-        HierarchicalTopic::new(s)
+    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
+        HierarchicalTopic::from_str(s).unwrap()
     }
 
-    fn test_message(payload: &str) -> Message<String> {
+    fn index(s: &str) -> HierarchicalIndex<3, 10> {
+        HierarchicalIndex::from_str(s).unwrap()
+    }
+
+    fn test_message(payload: &str) -> Message<String, 3, 10> {
         Message {
-            topic: topic("test_input_topic"),
+            topic: topic("test.input.topic"),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
@@ -177,12 +205,12 @@ mod tests {
     async fn test_bus_storer_initialization() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
-        let t = topic("test_input_topic");
+        let i = index("test.input.topic");
 
-        let bus_storer = BusStorer::new(MockStorer, state, bus, t.clone()).unwrap();
+        let bus_storer = BusStorer::new(MockStorer, state, bus, i.clone()).unwrap();
 
         assert!(bus_storer.receiver.is_none());
-        assert_eq!(bus_storer.input_topic, t);
+        assert_eq!(bus_storer.input_index, i);
     }
 
     #[test]
@@ -202,10 +230,10 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
         let state_checker = state.clone();
-        let input_topic = topic("test_input_topic");
+        let input_index = index("test.input.topic");
 
         let mut bus_storer =
-            BusStorer::new(MockStorer, state, bus.clone(), input_topic.clone()).unwrap();
+            BusStorer::new(MockStorer, state, bus.clone(), input_index.clone()).unwrap();
 
         let worker = async {
             bus_storer.run().await;
@@ -232,7 +260,7 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
         let mut bus_storer =
-            BusStorer::new(MockStorer, state, bus.clone(), topic("test_input_topic")).unwrap();
+            BusStorer::new(MockStorer, state, bus.clone(), index("test.input.topic")).unwrap();
 
         bus.shutdown();
         bus_storer.run().await;
@@ -245,7 +273,7 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
         let mut bus_storer =
-            BusStorer::new(MockStorer, state, bus, topic("test_input_topic")).unwrap();
+            BusStorer::new(MockStorer, state, bus, index("test.input.topic")).unwrap();
 
         bus_storer.stop().await;
         bus_storer.run().await;

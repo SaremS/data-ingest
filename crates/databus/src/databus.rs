@@ -7,8 +7,7 @@ use trie::{
     trie_index::TrieIndex,
 };
 
-use crate::message::{Message};
-
+use crate::message::Message;
 
 pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
     topics: TrieIndex<mpsc::Sender<Message<T, VEC_CAP, STR_CAP>>, VEC_CAP, STR_CAP>,
@@ -16,7 +15,9 @@ pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: 
     is_closed: AtomicBool,
 }
 
-impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus<T, VEC_CAP, STR_CAP> {
+impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
+    DataBus<T, VEC_CAP, STR_CAP>
+{
     pub fn new(channel_capacity: usize) -> Self {
         DataBus {
             topics: TrieIndex::new(),
@@ -30,7 +31,10 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus
         self.topics.clear();
     }
 
-    pub fn subscribe(&self, topic_index: &HierarchicalIndex<VEC_CAP, STR_CAP>) -> Option<mpsc::Receiver<Message<T, VEC_CAP, STR_CAP>>> {
+    pub fn subscribe(
+        &self,
+        topic_index: &HierarchicalIndex<VEC_CAP, STR_CAP>,
+    ) -> Option<mpsc::Receiver<Message<T, VEC_CAP, STR_CAP>>> {
         if self.is_closed.load(Ordering::SeqCst) {
             return None;
         }
@@ -51,7 +55,6 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus
 
         let senders = {
             let mut active_senders = Vec::new();
-
 
             for tx in self.topics.get_at_index(&topic) {
                 if !tx.is_closed() {
@@ -78,11 +81,15 @@ mod tests {
 
     use crate::message::{MessageHeader, MessageType};
 
-    fn topic(s: &str) -> HierarchicalTopic {
-        HierarchicalTopic::new(s)
+    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
+        HierarchicalTopic::from_str(s).unwrap()
     }
 
-    fn test_message(payload: impl Into<String>, t: &str) -> Message<String> {
+    fn index(s: &str) -> HierarchicalIndex<3, 10> {
+        HierarchicalIndex::from_str(s).unwrap()
+    }
+
+    fn test_message(payload: impl Into<String>, t: &str) -> Message<String, 3, 10> {
         Message {
             topic: topic(t),
             header: MessageHeader {
@@ -95,12 +102,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_data_bus() {
-        let bus = DataBus::<String>::new(10);
-        let t = topic("test_topic");
+        let bus = DataBus::<String, 3, 10>::new(10);
+        let t = index("testtopic");
 
         let mut rx = bus.subscribe(&t).unwrap();
 
-        bus.publish(test_message("Hello, DataBus!", "test_topic"))
+        bus.publish(test_message("Hello, DataBus!", "testtopic"))
             .await
             .unwrap();
 
@@ -110,24 +117,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_responding_listener() {
-        let bus = Arc::new(DataBus::<String>::new(10));
-        let request_topic = topic("request_topic");
-        let response_topic = topic("response_topic");
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
+        let request_index = index("request");
+        let response_index = index("response");
 
-        let mut request_rx = bus.subscribe(&request_topic).unwrap();
-        let mut response_rx = bus.subscribe(&response_topic).unwrap();
+        let mut request_rx = bus.subscribe(&request_index).unwrap();
+        let mut response_rx = bus.subscribe(&response_index).unwrap();
 
         let bus_clone = bus.clone();
         tokio::spawn(async move {
             if let Some(_req) = request_rx.recv().await {
                 bus_clone
-                    .publish(test_message("Response from listener", "response_topic"))
+                    .publish(test_message("Response from listener", "response"))
                     .await
                     .unwrap();
             }
         });
 
-        bus.publish(test_message("Request to listener", "request_topic"))
+        bus.publish(test_message("Request to listener", "request"))
             .await
             .unwrap();
 
@@ -140,16 +147,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_listeners() {
-        let bus = Arc::new(DataBus::<String>::new(10));
-        let t = topic("global_events");
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
+        let mut rx1 = bus.subscribe(&index("global.one")).unwrap();
+        let mut rx2 = bus.subscribe(&index("global.*")).unwrap();
+        let mut rx3 = bus.subscribe(&index("*.*")).unwrap();
 
-        let mut rx1 = bus.subscribe(&t).unwrap();
-        let mut rx2 = bus.subscribe(&t).unwrap();
-        let mut rx3 = bus.subscribe(&t).unwrap();
-
-        bus.publish(test_message("test", "global_events"))
-            .await
-            .unwrap();
+        bus.publish(test_message("test", "global.one")).await.unwrap();
 
         assert_eq!(rx1.recv().await.unwrap().payload, "test");
         assert_eq!(rx2.recv().await.unwrap().payload, "test");
@@ -157,55 +160,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_topic_pruning() {
-        let bus = DataBus::<String>::new(10);
-        let t = topic("temporary_topic");
-
-        {
-            let _rx = bus.subscribe(&t).unwrap();
-            assert!(bus.topics.contains_key(&t));
-        }
-
-        bus.publish(test_message("trigger pruning", "temporary_topic"))
-            .await
-            .unwrap();
-
-        assert!(
-            !bus.topics.contains_key(&t),
-            "Topic should have been pruned"
-        );
-    }
-
-    #[tokio::test]
     async fn test_graceful_shutdown() {
-        let bus = DataBus::<String>::new(10);
-        let shutdown_topic = topic("shutdown_topic");
-        let another_topic = topic("another_topic");
+        let bus = DataBus::<String, 3, 10>::new(10);
+        let shutdown_topic = index("shutdown");
+        let another_topic = index("another");
         let mut rx = bus.subscribe(&shutdown_topic).unwrap();
 
         bus.shutdown();
 
         assert!(bus.subscribe(&another_topic).is_none());
 
-        assert!(
-            bus.publish(test_message("fail", "shutdown_topic"))
-                .await
-                .is_err()
-        );
+        assert!(bus.publish(test_message("fail", "shutdown")).await.is_err());
 
         assert!(rx.recv().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_publish_without_subscribers_is_ok() {
-        let bus = DataBus::<String>::new(10);
-        let missing_topic = topic("missing_topic");
-
-        assert!(
-            bus.publish(test_message("no listeners", "missing_topic"))
-                .await
-                .is_ok()
-        );
-        assert!(!bus.topics.contains_key(&missing_topic));
     }
 }

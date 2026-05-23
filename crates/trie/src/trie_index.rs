@@ -2,12 +2,20 @@ use arc_swap::ArcSwap;
 use std::sync::Arc;
 
 use crate::{
-    hierarchical_index::{HierarchicalIndex, HierarchicalTopic}, 
-    trie_index_internal::TrieIndexInternal
+    hierarchical_index::{HierarchicalIndex, HierarchicalTopic},
+    trie_index_internal::TrieIndexInternal,
 };
 
 pub struct TrieIndex<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> {
     internal: ArcSwap<TrieIndexInternal<T, VEC_CAP, STR_CAP>>,
+}
+
+impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> Default
+    for TrieIndex<T, VEC_CAP, STR_CAP>
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndex<T, VEC_CAP, STR_CAP> {
@@ -36,7 +44,6 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndex<T, VEC_CAP,
     }
 }
 
-
 #[cfg(test)]
 mod async_tests {
     use super::*;
@@ -50,13 +57,12 @@ mod async_tests {
         let trie = TrieIndex::<String, VEC_CAP, STR_CAP>::new();
 
         trie.insert_and_set_at_index(
-            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap(),
+            &HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap(),
             "async_value".to_string(),
         );
 
-        let result = trie.get_at_index(
-            HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap(),
-        );
+        let result =
+            trie.get_at_index(&HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap());
 
         assert_eq!(result, vec!["async_value".to_string()]);
     }
@@ -70,9 +76,10 @@ mod async_tests {
             let trie_clone = Arc::clone(&trie);
             let handle = tokio::spawn(async move {
                 let topic_str = format!("t.{}", i);
-                let insert_topic = HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str(&topic_str).unwrap();
-                
-                trie_clone.insert_and_set_at_index(insert_topic, format!("val_{}", i));
+                let insert_topic =
+                    HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str(&topic_str).unwrap();
+
+                trie_clone.insert_and_set_at_index(&insert_topic, format!("val_{}", i));
             });
             handles.push(handle);
         }
@@ -84,9 +91,9 @@ mod async_tests {
         for i in 0..50 {
             let topic_str = format!("t.{}", i);
             let search_topic = HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str(&topic_str).unwrap();
-            
-            let results = trie.get_at_index(search_topic);
-            
+
+            let results = trie.get_at_index(&search_topic);
+
             assert_eq!(results.len(), 1, "Missing value for topic: {}", topic_str);
             assert_eq!(results[0], format!("val_{}", i));
         }
@@ -97,7 +104,7 @@ mod async_tests {
         let trie = Arc::new(TrieIndex::<String, VEC_CAP, STR_CAP>::new());
 
         trie.insert_and_set_at_index(
-            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("a.*.c").unwrap(),
+            &HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("a.*.c").unwrap(),
             "seed_value".to_string(),
         );
 
@@ -108,17 +115,19 @@ mod async_tests {
             let trie_clone = Arc::clone(&trie);
             write_handles.push(tokio::spawn(async move {
                 let topic_str = format!("w.{}", i);
-                let insert_topic = HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str(&topic_str).unwrap();
-                trie_clone.insert_and_set_at_index(insert_topic, format!("val_{}", i));
+                let insert_topic =
+                    HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str(&topic_str).unwrap();
+                trie_clone.insert_and_set_at_index(&insert_topic, format!("val_{}", i));
             }));
         }
 
         for _ in 0..50 {
             let trie_clone = Arc::clone(&trie);
             read_handles.push(tokio::spawn(async move {
-                let search_topic = HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap();
-                let results = trie_clone.get_at_index(search_topic);
-                
+                let search_topic =
+                    HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("a.b.c").unwrap();
+                let results = trie_clone.get_at_index(&search_topic);
+
                 assert!(
                     results.contains(&"seed_value".to_string()),
                     "Reader failed to see seed value during concurrent writes"
@@ -139,27 +148,32 @@ mod async_tests {
         let trie = TrieIndex::<String, VEC_CAP, STR_CAP>::new();
 
         trie.insert_and_set_at_index(
-            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
+            &HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
             "clear1".to_string(),
         );
 
         trie.insert_and_set_at_index(
-            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.*.z").unwrap(),
+            &HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.*.z").unwrap(),
             "clear2".to_string(),
         );
 
-        let mut result_before_clear = trie.get_at_index(
-            HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
-        );
+        let mut result_before_clear =
+            trie.get_at_index(&HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap());
 
         result_before_clear.sort();
-        assert_eq!(result_before_clear, vec!["clear1".to_string(), "clear2".to_string()]);
+        assert_eq!(
+            result_before_clear,
+            vec!["clear1".to_string(), "clear2".to_string()]
+        );
 
         trie.clear();
 
-        let result_after_clear = trie.get_at_index(
-            HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
+        let result_after_clear =
+            trie.get_at_index(&HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap());
+        assert_eq!(
+            result_after_clear.len(),
+            0,
+            "Trie should be empty after clear"
         );
-        assert_eq!(result_after_clear.len(), 0, "Trie should be empty after clear");
     }
 }
