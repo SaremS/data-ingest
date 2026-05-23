@@ -152,7 +152,9 @@ mod tests {
         let mut rx2 = bus.subscribe(&index("global.*")).unwrap();
         let mut rx3 = bus.subscribe(&index("*.*")).unwrap();
 
-        bus.publish(test_message("test", "global.one")).await.unwrap();
+        bus.publish(test_message("test", "global.one"))
+            .await
+            .unwrap();
 
         assert_eq!(rx1.recv().await.unwrap().payload, "test");
         assert_eq!(rx2.recv().await.unwrap().payload, "test");

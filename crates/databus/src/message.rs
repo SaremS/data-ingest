@@ -43,7 +43,7 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
     MessageBuilder<T, VEC_CAP, STR_CAP>
 {
     fn new(payload: T, message_type: MessageType, topic_root: &str) -> Result<Self, MessageError> {
-        let topic = HierarchicalTopic::new(topic_root).map_err(|e| {
+        let topic = HierarchicalTopic::from_str(topic_root).map_err(|e| {
             MessageError::CreationError(
                 format!("Invalid topic root '{}': {}", topic_root, e).into(),
             )
@@ -55,6 +55,19 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
             message_meta: HashMap::new(),
             payload,
         })
+    }
+
+    pub fn new_from_topic(
+        payload: T,
+        message_type: MessageType,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    ) -> Self {
+        Self {
+            topic,
+            message_type,
+            message_meta: HashMap::new(),
+            payload,
+        }
     }
 
     pub fn new_from_message(message: Message<T, VEC_CAP, STR_CAP>) -> Self {
@@ -70,8 +83,16 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
         Self::new(payload, MessageType::Data, topic_root)
     }
 
+    pub fn new_data_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
+        Self::new_from_topic(payload, MessageType::Data, topic)
+    }
+
     pub fn new_empty(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Empty, topic_root)
+    }
+
+    pub fn new_empty_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
+        Self::new_from_topic(payload, MessageType::Empty, topic)
     }
 
     pub fn new_error(payload: T, topic_root: &str) -> Result<Self, MessageError> {

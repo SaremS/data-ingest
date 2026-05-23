@@ -1001,6 +1001,7 @@ dependencies = [
  "scraper",
  "thiserror",
  "tokio",
+ "trie",
  "url",
 ]
 

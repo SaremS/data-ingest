@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -6,16 +7,20 @@ use scraper::{Html, Selector};
 use thiserror::Error;
 use url::Url;
 
+use trie::hierarchical_index::HierarchicalTopic;
+
 use databus::{
-    message::{HierarchicalTopic, Message, MessageBuilder},
+    message::{Message, MessageBuilder},
     producer::Producer,
 };
 
-pub struct HtmlListProducer {
+pub struct HtmlListProducer<const VEC_CAP: usize, const VEC_STR: usize> {
     target_url: Url,
     tree_path_selector: Selector,
     sub_path_selector: Selector,
     ingest_from_back: bool,
+
+    _marker: PhantomData<([u8; VEC_CAP], [u8; VEC_STR])>,
 }
 
 #[derive(Clone)]
@@ -35,7 +40,7 @@ pub enum HtmlListProducerError {
     ExtractError(Cow<'static, str>),
 }
 
-impl HtmlListProducer {
+impl<const VEC_CAP: usize, const VEC_STR: usize> HtmlListProducer<VEC_CAP, VEC_STR> {
     pub fn new(
         target_url: &str,
         tree_path: &str,
@@ -63,6 +68,8 @@ impl HtmlListProducer {
             tree_path_selector,
             sub_path_selector,
             ingest_from_back,
+
+            _marker: PhantomData,
         })
     }
 
@@ -124,12 +131,15 @@ impl HtmlListProducer {
 }
 
 #[async_trait]
-impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
+impl<const VEC_CAP: usize, const STR_CAP: usize>
+    Producer<Bytes, HtmlListProducerState, VEC_CAP, STR_CAP>
+    for HtmlListProducer<VEC_CAP, STR_CAP>
+{
     async fn produce(
         &self,
-        topic: HierarchicalTopic,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         old_state: HtmlListProducerState,
-    ) -> (Message<Bytes>, HtmlListProducerState) {
+    ) -> (Message<Bytes, VEC_CAP, STR_CAP>, HtmlListProducerState) {
         let links = self
             .extract_from_url(&self.target_url)
             .await
@@ -139,7 +149,11 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
             Ok(l) => l,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
+                    MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
+                        Bytes::new(),
+                        topic,
+                    )
+                    .build(),
                     HtmlListProducerState {
                         last_extracted_url: old_state.last_extracted_url,
                     },
@@ -149,7 +163,11 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
 
         if links.is_empty() {
             return (
-                MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
+                MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
+                    Bytes::new(),
+                    topic,
+                )
+                .build(),
                 HtmlListProducerState {
                     last_extracted_url: old_state.last_extracted_url,
                 },
@@ -175,7 +193,11 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
                 Some(l) => l.clone(),
                 None => {
                     return (
-                        MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
+                        MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
+                            Bytes::new(),
+                            topic,
+                        )
+                        .build(),
                         HtmlListProducerState {
                             last_extracted_url: old_state.last_extracted_url,
                         },
@@ -188,7 +210,11 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
             Ok(url) => url,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
+                    MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
+                        Bytes::new(),
+                        topic,
+                    )
+                    .build(),
                     HtmlListProducerState {
                         last_extracted_url: old_state.last_extracted_url,
                     },
@@ -201,7 +227,11 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
                 Ok(result) => result,
                 Err(_) => {
                     return (
-                        MessageBuilder::<Bytes>::new_empty(Bytes::new(), topic).build(),
+                        MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
+                            Bytes::new(),
+                            topic,
+                        )
+                        .build(),
                         HtmlListProducerState {
                             last_extracted_url: old_state.last_extracted_url,
                         },
@@ -210,7 +240,7 @@ impl Producer<Bytes, HtmlListProducerState> for HtmlListProducer {
             };
 
         (
-            MessageBuilder::<Bytes>::new_data(content, topic)
+            MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_data_from_topic(content, topic)
                 .add_meta("filename".to_string(), dataset_name)
                 .build(),
             HtmlListProducerState {
@@ -227,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_extract_returns_matching_links_only() {
-        let producer = HtmlListProducer::new(
+        let producer = HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -258,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_extract_skips_elements_without_href() {
-        let producer = HtmlListProducer::new(
+        let producer = HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -284,8 +314,12 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_target_url() {
-        let error = match HtmlListProducer::new("not-a-url", "ul.list-class", "a.link-class", false)
-        {
+        let error = match HtmlListProducer::<3, 10>::new(
+            "not-a-url",
+            "ul.list-class",
+            "a.link-class",
+            false,
+        ) {
             Ok(_) => panic!("expected invalid URL"),
             Err(error) => error,
         };
@@ -296,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_tree_path_selector() {
-        let error = match HtmlListProducer::new(
+        let error = match HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class[",
             "a.link-class",
@@ -316,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_sub_path_selector() {
-        let error = match HtmlListProducer::new(
+        let error = match HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class[",
@@ -336,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_get_filename_from_url_returns_last_path_segment() {
-        let producer = HtmlListProducer::new(
+        let producer = HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -352,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_get_filename_from_url_rejects_urls_without_path_segments() {
-        let producer = HtmlListProducer::new(
+        let producer = HtmlListProducer::<3, 10>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
