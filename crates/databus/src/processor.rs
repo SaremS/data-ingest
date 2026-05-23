@@ -7,18 +7,22 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
+use trie::hierarchical_index::HierarchicalTopic;
+
 use crate::{
     databus::DataBus,
-    message::{HierarchicalTopic, Message},
+    message::{Message},
     runnable::Runnable,
     state::State,
 };
 
+
+
 #[async_trait]
-pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
+pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>: Send + Sync {
     async fn process(
         &self,
-        topic: HierarchicalTopic,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         message: Message<T>,
         old_state: S,
     ) -> (Message<T>, S);
@@ -29,10 +33,12 @@ pub struct BusProcessor<
     S: Clone + Send + Sync,
     U: State<S>,
     V: Processor<T, S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T>>,
+    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
     input_topic: HierarchicalTopic,
     output_topic: HierarchicalTopic,
     receiver: Option<Receiver<Message<T>>>,
@@ -53,15 +59,15 @@ pub enum BusProcessorError {
     CreationError(Cow<'static, str>),
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>>
-    BusProcessor<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>, const VEC_CAP: usize, const STR_CAP: usize>
+    BusProcessor<T, S, U, V, VEC_CAP, STR_CAP>
 {
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T>>,
-        input_topic: HierarchicalTopic,
-        output_topic: HierarchicalTopic,
+        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+        input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
     ) -> Result<Self, BusProcessorError> {
         if input_topic.is_empty() {
             return Err(BusProcessorError::CreationError(
@@ -94,8 +100,8 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>> Runnable
-    for BusProcessor<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>, const VEC_CAP: usize, const STR_CAP: usize> Runnable
+    for BusProcessor<T, S, U, V, VEC_CAP, STR_CAP>
 {
     async fn run(&mut self) {
         if self.receiver.is_none() {

@@ -5,9 +5,11 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
+use trie::hierarchical_index::HierarchicalTopic;
+
 use crate::{
     databus::DataBus,
-    message::{HierarchicalTopic, Message},
+    message::Message,
     runnable::Runnable,
     state::State,
 };
@@ -45,10 +47,12 @@ pub struct ScheduledProducer<
     S: Clone + Send + Sync,
     U: State<S>,
     V: Producer<T, S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
 > {
     producer: V,
     producer_state: U,
-    bus: Arc<DataBus<T>>,
+    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
     topic: HierarchicalTopic,
 
     schedule: Schedule,
@@ -56,14 +60,14 @@ pub struct ScheduledProducer<
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>>
-    ScheduledProducer<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>, const VEC_CAP: usize, const STR_CAP: usize>
+    ScheduledProducer<T, S, U, V, VEC_CAP, STR_CAP>
 {
     pub fn new(
         producer: V,
         producer_state: U,
-        bus: Arc<DataBus<T>>,
-        topic: HierarchicalTopic,
+        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         schedule: Schedule,
     ) -> Result<Self, ProducerError> {
         if topic.is_empty() {
@@ -84,8 +88,8 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T,
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>> Runnable
-    for ScheduledProducer<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> Runnable
+    for ScheduledProducer<T, S, U, V, VEC_CAP, STR_CAP>
 {
     async fn run(&mut self) {
         loop {

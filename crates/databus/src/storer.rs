@@ -7,9 +7,11 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
+use trie::hierarchical_index::HierarchicalTopic;
+
 use crate::{
     databus::DataBus,
-    message::{HierarchicalTopic, Message},
+    message::Message,
     runnable::Runnable,
     state::State,
 };
@@ -31,10 +33,10 @@ pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
     async fn store(&self, message: Message<T>, old_state: S) -> S;
 }
 
-pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>> {
+pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T>>,
+    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
     input_topic: HierarchicalTopic,
     receiver: Option<Receiver<Message<T>>>,
 
@@ -42,14 +44,14 @@ pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>>
-    BusStorer<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize>
+    BusStorer<T, S, U, V, VEC_CAP, STR_CAP>
 {
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T>>,
-        input_topic: HierarchicalTopic,
+        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+        input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
     ) -> Result<Self, BusStorerError> {
         if input_topic.is_empty() {
             return Err(BusStorerError::CreationError(
@@ -71,8 +73,8 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>> Runnable
-    for BusStorer<T, S, U, V>
+impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> Runnable
+    for BusStorer<T, S, U, V, VEC_CAP, STR_CAP>
 {
     async fn run(&mut self) {
         if self.receiver.is_none() {

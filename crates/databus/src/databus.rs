@@ -3,18 +3,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use crate::message::{HierarchicalTopic, Message};
+use trie::{
+    hierarchical_index::{HierarchicalIndex, HierarchicalTopic},
+    trie_index::TrieIndex,
+};
 
-pub struct DataBus<T: Clone + Send + Sync> {
-    topics: DashMap<HierarchicalTopic, Vec<mpsc::Sender<Message<T>>>>,
+use crate::message::{Message};
+
+
+pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
+    topics: TrieIndex<Vec<mpsc::Sender<Message<T>>>, VEC_CAP, STR_CAP>,
     channel_capacity: usize,
     is_closed: AtomicBool,
 }
 
-impl<T: Clone + Send + Sync> DataBus<T> {
+impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus<T, VEC_CAP, STR_CAP> {
     pub fn new(channel_capacity: usize) -> Self {
         DataBus {
-            topics: DashMap::new(),
+            topics: TrieIndex::new(),
             channel_capacity,
             is_closed: AtomicBool::new(false),
         }

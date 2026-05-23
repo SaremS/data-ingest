@@ -203,6 +203,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "trie",
 ]
 
 [[package]]
