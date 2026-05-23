@@ -29,16 +29,16 @@ pub enum BusStorerError {
 }
 
 #[async_trait]
-pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn store(&self, message: Message<T>, old_state: S) -> S;
+pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>: Send + Sync {
+    async fn store(&self, message: Message<T, VEC_CAP, STR_CAP>, old_state: S) -> S;
 }
 
 pub struct BusStorer<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Storer<T, S>, const VEC_CAP: usize, const STR_CAP: usize> {
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-    input_topic: HierarchicalTopic,
-    receiver: Option<Receiver<Message<T>>>,
+    input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,

@@ -17,18 +17,22 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndex<T, VEC_CAP,
         }
     }
 
-    pub fn insert_and_set_at_index(&self, topic: HierarchicalIndex<VEC_CAP, STR_CAP>, value: T) {
+    pub fn insert_and_set_at_index(&self, topic: &HierarchicalIndex<VEC_CAP, STR_CAP>, value: T) {
         self.internal.rcu(|current_arc| {
             let mut new_arc = Arc::clone(current_arc);
             let inner_mut = Arc::make_mut(&mut new_arc);
-            inner_mut.insert_and_set_at_index(topic.clone(), value.clone());
+            inner_mut.insert_and_set_at_index(topic, value.clone());
             new_arc
         });
     }
 
-    pub fn get_at_index(&self, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Vec<T> {
+    pub fn get_at_index(&self, topic: &HierarchicalTopic<VEC_CAP, STR_CAP>) -> Vec<T> {
         let internal = self.internal.load();
         internal.get_at_index(topic)
+    }
+
+    pub fn clear(&self) {
+        self.internal.store(Arc::new(TrieIndexInternal::new()));
     }
 }
 
@@ -128,5 +132,34 @@ mod async_tests {
         for handle in read_handles {
             handle.await.expect("Reader panicked");
         }
+    }
+
+    #[tokio::test]
+    async fn test_clear() {
+        let trie = TrieIndex::<String, VEC_CAP, STR_CAP>::new();
+
+        trie.insert_and_set_at_index(
+            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
+            "clear1".to_string(),
+        );
+
+        trie.insert_and_set_at_index(
+            HierarchicalIndex::<VEC_CAP, STR_CAP>::from_str("x.*.z").unwrap(),
+            "clear2".to_string(),
+        );
+
+        let mut result_before_clear = trie.get_at_index(
+            HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
+        );
+
+        result_before_clear.sort();
+        assert_eq!(result_before_clear, vec!["clear1".to_string(), "clear2".to_string()]);
+
+        trie.clear();
+
+        let result_after_clear = trie.get_at_index(
+            HierarchicalTopic::<VEC_CAP, STR_CAP>::from_str("x.y.z").unwrap(),
+        );
+        assert_eq!(result_after_clear.len(), 0, "Trie should be empty after clear");
     }
 }

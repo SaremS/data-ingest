@@ -29,7 +29,7 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndexInternal<T, 
 
     pub fn insert_and_set_at_index(
         &mut self,
-        topic: HierarchicalIndex<VEC_CAP, STR_CAP>,
+        topic: &HierarchicalIndex<VEC_CAP, STR_CAP>,
         value: T,
     ) {
         let parts = topic.parts_as_strings();
@@ -70,11 +70,16 @@ impl<T: Clone, const VEC_CAP: usize, const STR_CAP: usize> TrieIndexInternal<T, 
         return results;
     }
 
-    pub fn get_at_index(&self, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Vec<T> {
+    pub fn get_at_index(&self, topic: &HierarchicalTopic<VEC_CAP, STR_CAP>) -> Vec<T> {
         let parts = topic.parts_as_strings();
         let parts_deque: VecDeque<String> = VecDeque::from(parts);
 
         return self.get_next(parts_deque);
+    }
+
+    pub fn clear(&mut self) {
+        self.next.clear();
+        self.value = None;
     }
 }
 
@@ -118,5 +123,28 @@ mod tests {
         let result_nomatch_too_short2 =
             trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a").unwrap());
         assert_eq!(result_nomatch_too_short2.len(), 0);
+    }
+
+    #[test]
+    fn test_trie_index_clear() {
+        let mut trie_index = TrieIndexInternal::<String, 3, 3>::new();
+
+        trie_index.insert_and_set_at_index(
+            HierarchicalIndex::<3, 3>::from_str("a.b.c").unwrap(),
+            "value1".to_string(),
+        );
+        trie_index.insert_and_set_at_index(
+            HierarchicalIndex::<3, 3>::from_str("a.b.*").unwrap(),
+            "value1".to_string(),
+        );
+        trie_index.insert_and_set_at_index(
+            HierarchicalIndex::<3, 3>::from_str("a.*.*").unwrap(),
+            "value1".to_string(),
+        );
+
+        trie_index.clear();
+
+        let result = trie_index.get_at_index(HierarchicalTopic::<3, 3>::from_str("a.b.c").unwrap());
+        assert_eq!(result.len(), 0);
     }
 }

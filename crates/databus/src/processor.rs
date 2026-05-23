@@ -23,9 +23,9 @@ pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const VEC_CA
     async fn process(
         &self,
         topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Message<T>,
+        message: Message<T, VEC_CAP, STR_CAP>,
         old_state: S,
-    ) -> (Message<T>, S);
+    ) -> (Message<T, VEC_CAP, STR_CAP>, S);
 }
 
 pub struct BusProcessor<
@@ -39,9 +39,9 @@ pub struct BusProcessor<
     processor: V,
     processor_state: U,
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-    input_topic: HierarchicalTopic,
-    output_topic: HierarchicalTopic,
-    receiver: Option<Receiver<Message<T>>>,
+    input_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,

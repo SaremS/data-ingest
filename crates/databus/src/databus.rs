@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use trie::{
@@ -12,7 +11,7 @@ use crate::message::{Message};
 
 
 pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
-    topics: TrieIndex<Vec<mpsc::Sender<Message<T>>>, VEC_CAP, STR_CAP>,
+    topics: TrieIndex<mpsc::Sender<Message<T, VEC_CAP, STR_CAP>>, VEC_CAP, STR_CAP>,
     channel_capacity: usize,
     is_closed: AtomicBool,
 }
@@ -31,19 +30,19 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus
         self.topics.clear();
     }
 
-    pub fn subscribe(&self, topic: &HierarchicalTopic) -> Option<mpsc::Receiver<Message<T>>> {
+    pub fn subscribe(&self, topic_index: &HierarchicalIndex<VEC_CAP, STR_CAP>) -> Option<mpsc::Receiver<Message<T, VEC_CAP, STR_CAP>>> {
         if self.is_closed.load(Ordering::SeqCst) {
             return None;
         }
 
         let (tx, rx) = mpsc::channel(self.channel_capacity);
 
-        self.topics.entry(topic.clone()).or_default().push(tx);
+        self.topics.insert_and_set_at_index(topic_index, tx);
 
         Some(rx)
     }
 
-    pub async fn publish(&self, message: Message<T>) -> Result<(), &'static str> {
+    pub async fn publish(&self, message: Message<T, VEC_CAP, STR_CAP>) -> Result<(), &'static str> {
         if self.is_closed.load(Ordering::SeqCst) {
             return Err("Bus is closed");
         }
@@ -53,16 +52,15 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> DataBus
         let senders = {
             let mut active_senders = Vec::new();
 
-            if let Some(mut subscribers) = self.topics.get_mut(&topic) {
-                subscribers.retain(|tx| !tx.is_closed());
-                active_senders = subscribers.clone();
+
+            for tx in self.topics.get_at_index(&topic) {
+                if !tx.is_closed() {
+                    active_senders.push(tx.clone());
+                }
             }
 
             active_senders
         };
-
-        self.topics
-            .remove_if(&topic, |_, subscribers| subscribers.is_empty());
 
         for tx in senders {
             let _ = tx.send(message.clone()).await;

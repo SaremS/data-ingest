@@ -38,8 +38,8 @@ pub enum ProducerError {
 }
 
 #[async_trait]
-pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn produce(&self, topic: HierarchicalTopic, old_state: S) -> (Message<T>, S);
+pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>: Send + Sync {
+    async fn produce(&self, topic: HierarchicalTopic<VEC_CAP, STR_CAP>, old_state: S) -> (Message<T, VEC_CAP, STR_CAP>, S);
 }
 
 pub struct ScheduledProducer<
@@ -53,7 +53,7 @@ pub struct ScheduledProducer<
     producer: V,
     producer_state: U,
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-    topic: HierarchicalTopic,
+    topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
