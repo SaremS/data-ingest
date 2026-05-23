@@ -7,35 +7,40 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    databus::DataBus,
-    message::{HierarchicalTopic, Message},
-    runnable::Runnable,
-    state::State,
-};
+use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
+
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 #[async_trait]
-pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
+pub trait Processor<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+>: Send + Sync
+{
     async fn process(
         &self,
-        topic: HierarchicalTopic,
-        message: Message<T>,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        message: Message<T, VEC_CAP, STR_CAP>,
         old_state: S,
-    ) -> (Message<T>, S);
+    ) -> (Message<T, VEC_CAP, STR_CAP>, S);
 }
 
 pub struct BusProcessor<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
     U: State<S>,
-    V: Processor<T, S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Processor<T, S, VEC_CAP, STR_CAP>,
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T>>,
-    input_topic: HierarchicalTopic,
-    output_topic: HierarchicalTopic,
-    receiver: Option<Receiver<Message<T>>>,
+    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+    input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
+    output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -53,17 +58,23 @@ pub enum BusProcessorError {
     CreationError(Cow<'static, str>),
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>>
-    BusProcessor<T, S, U, V>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Processor<T, S, VEC_CAP, STR_CAP>,
+> BusProcessor<T, S, U, VEC_CAP, STR_CAP, V>
 {
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T>>,
-        input_topic: HierarchicalTopic,
-        output_topic: HierarchicalTopic,
+        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+        input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
+        output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
     ) -> Result<Self, BusProcessorError> {
-        if input_topic.is_empty() {
+        if input_index.is_empty() {
             return Err(BusProcessorError::CreationError(
                 "Input topic cannot be empty".into(),
             ));
@@ -73,9 +84,9 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
                 "Output topic cannot be empty".into(),
             ));
         }
-        if input_topic == output_topic {
+        if input_index.matches_topic(&output_topic) {
             return Err(BusProcessorError::CreationError(
-                "Input and output topics must be different".into(),
+                "Input index cannot contain output topic to avoid infinite loops".into(),
             ));
         }
 
@@ -83,7 +94,7 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
             processor,
             processor_state,
             bus,
-            input_topic,
+            input_index,
             output_topic,
             receiver: None,
 
@@ -94,12 +105,18 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Processor<T, S>> Runnable
-    for BusProcessor<T, S, U, V>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Processor<T, S, VEC_CAP, STR_CAP>,
+> Runnable for BusProcessor<T, S, U, VEC_CAP, STR_CAP, V>
 {
     async fn run(&mut self) {
         if self.receiver.is_none() {
-            if let Some(rx) = self.bus.subscribe(&self.input_topic) {
+            if let Some(rx) = self.bus.subscribe(&self.input_index) {
                 self.receiver = Some(rx);
             } else {
                 return;
@@ -182,13 +199,13 @@ mod tests {
     struct MockProcessor;
 
     #[async_trait]
-    impl Processor<String, i32> for MockProcessor {
+    impl Processor<String, i32, 3, 10> for MockProcessor {
         async fn process(
             &self,
-            _topic: HierarchicalTopic,
-            message: Message<String>,
+            _topic: HierarchicalTopic<3, 10>,
+            message: Message<String, 3, 10>,
             old_state: i32,
-        ) -> (Message<String>, i32) {
+        ) -> (Message<String, 3, 10>, i32) {
             let new_state = old_state + 1;
             (message, new_state)
         }
@@ -197,25 +214,29 @@ mod tests {
     struct SlowProcessor;
 
     #[async_trait]
-    impl Processor<String, i32> for SlowProcessor {
+    impl Processor<String, i32, 3, 10> for SlowProcessor {
         async fn process(
             &self,
-            _topic: HierarchicalTopic,
-            message: Message<String>,
+            _topic: HierarchicalTopic<3, 10>,
+            message: Message<String, 3, 10>,
             old_state: i32,
-        ) -> (Message<String>, i32) {
+        ) -> (Message<String, 3, 10>, i32) {
             sleep(Duration::from_millis(25)).await;
             (message, old_state + 1)
         }
     }
 
-    fn topic(s: &str) -> HierarchicalTopic {
-        HierarchicalTopic::new(s)
+    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
+        HierarchicalTopic::from_str(s).unwrap()
     }
 
-    fn test_message() -> Message<String> {
+    fn index(s: &str) -> HierarchicalIndex<3, 10> {
+        HierarchicalIndex::from_str(s).unwrap()
+    }
+
+    fn test_message() -> Message<String, 3, 10> {
         Message {
-            topic: topic("test_input_topic"),
+            topic: topic("input.topic"),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
@@ -234,14 +255,14 @@ mod tests {
             processor,
             state,
             bus,
-            topic("test_input_topic"),
-            topic("test_output_topic"),
+            index("test.input"),
+            topic("test.output"),
         )
         .unwrap();
 
         assert!(bus_processor.receiver.is_none());
-        assert_eq!(bus_processor.input_topic, topic("test_input_topic"));
-        assert_eq!(bus_processor.output_topic, topic("test_output_topic"));
+        assert_eq!(bus_processor.input_index, index("test.input"));
+        assert_eq!(bus_processor.output_topic, topic("test.output"));
     }
 
     #[test]
@@ -261,8 +282,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            topic("test_input_topic"),
-            topic("test_output_topic"),
+            index("input.topic"),
+            topic("output.topic"),
         );
         assert!(valid.is_ok());
     }
@@ -272,13 +293,8 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
 
-        let err = match BusProcessor::new(
-            MockProcessor,
-            state,
-            bus,
-            topic("same_topic"),
-            topic("same_topic"),
-        ) {
+        let err = match BusProcessor::new(MockProcessor, state, bus, index("topic"), topic("topic"))
+        {
             Ok(_) => panic!("expected matching topic validation error"),
             Err(err) => err,
         };
@@ -286,15 +302,15 @@ mod tests {
         assert!(matches!(err, BusProcessorError::CreationError(_)));
         assert_eq!(
             err.to_string(),
-            "Error Creating BusProcessor: Input and output topics must be different"
+            "Error Creating BusProcessor: Input index cannot contain output topic to avoid infinite loops"
         );
     }
 
     #[tokio::test]
     async fn test_bus_processor_run_loop() {
         let bus = Arc::new(DataBus::new(10));
-        let input_topic = topic("test_input_topic");
-        let output_topic = topic("test_output_topic");
+        let input_index = index("input.topic");
+        let output_topic = topic("output.topic");
 
         let state = MockState::new(0);
         let state_checker = state.clone();
@@ -303,7 +319,7 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            input_topic.clone(),
+            input_index.clone(),
             output_topic.clone(),
         )
         .unwrap();
@@ -337,8 +353,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            topic("test_input_topic"),
-            topic("test_output_topic"),
+            index("input.topic"),
+            topic("output.topic"),
         )
         .unwrap();
 
@@ -356,8 +372,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            topic("test_input_topic"),
-            topic("test_output_topic"),
+            index("input.topic"),
+            topic("output.topic"),
         )
         .unwrap();
 
@@ -372,8 +388,8 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
         let state_checker = state.clone();
-        let input_topic = topic("test_input_topic");
-        let output_topic = topic("test_output_topic");
+        let input_topic = index("input.topic");
+        let output_topic = topic("output.topic");
 
         let mut bus_processor = BusProcessor::new(
             SlowProcessor,
@@ -407,8 +423,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            topic("test_input_topic"),
-            topic("test_output_topic"),
+            index("input.topic"),
+            topic("output.topic"),
         )
         .unwrap();
 

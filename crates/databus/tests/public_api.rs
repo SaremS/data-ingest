@@ -4,13 +4,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{HierarchicalTopic, Message, MessageHeader, MessageType},
+    message::{Message, MessageHeader, MessageType},
     processor::{BusProcessor, BusProcessorError, Processor},
     producer::{Producer, ProducerError, Schedule, ScheduledProducer},
     state::State,
     storer::{BusStorer, BusStorerError, Storer},
 };
 use tokio::sync::Mutex;
+use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
+
+const VEC_CAP: usize = 4;
+const STR_CAP: usize = 32;
 
 #[derive(Clone)]
 struct CounterState {
@@ -63,8 +67,12 @@ impl State<Vec<String>> for StringListState {
 struct TestProducer;
 
 #[async_trait]
-impl Producer<String, i32> for TestProducer {
-    async fn produce(&self, topic: HierarchicalTopic, old_state: i32) -> (Message<String>, i32) {
+impl Producer<String, i32, VEC_CAP, STR_CAP> for TestProducer {
+    async fn produce(
+        &self,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        old_state: i32,
+    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
         (
             Message {
                 topic,
@@ -82,13 +90,13 @@ impl Producer<String, i32> for TestProducer {
 struct TestProcessor;
 
 #[async_trait]
-impl Processor<String, i32> for TestProcessor {
+impl Processor<String, i32, VEC_CAP, STR_CAP> for TestProcessor {
     async fn process(
         &self,
-        _topic: HierarchicalTopic,
-        message: Message<String>,
+        _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        message: Message<String, VEC_CAP, STR_CAP>,
         old_state: i32,
-    ) -> (Message<String>, i32) {
+    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
         (
             Message {
                 topic: message.topic,
@@ -106,22 +114,30 @@ impl Processor<String, i32> for TestProcessor {
 struct TestStorer;
 
 #[async_trait]
-impl Storer<String, Vec<String>> for TestStorer {
-    async fn store(&self, message: Message<String>, mut old_state: Vec<String>) -> Vec<String> {
+impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for TestStorer {
+    async fn store(
+        &self,
+        message: Message<String, VEC_CAP, STR_CAP>,
+        mut old_state: Vec<String>,
+    ) -> Vec<String> {
         old_state.push(message.payload);
         old_state
     }
 }
 
-fn topic(s: &str) -> HierarchicalTopic {
-    HierarchicalTopic::new(s)
+fn topic(s: &str) -> HierarchicalTopic<VEC_CAP, STR_CAP> {
+    HierarchicalTopic::new(s).unwrap()
+}
+
+fn index(s: &str) -> HierarchicalIndex<VEC_CAP, STR_CAP> {
+    HierarchicalIndex::new(s).unwrap()
 }
 
 #[tokio::test]
 async fn root_exports_support_external_publish_and_subscribe() {
-    let bus = DataBus::<String>::new(4);
-    let t = topic("public-topic");
-    let mut rx = bus.subscribe(&t).unwrap();
+    let bus = DataBus::<String, VEC_CAP, STR_CAP>::new(4);
+    let t = topic("publictopic");
+    let mut rx = bus.subscribe(&index("publictopic")).unwrap();
 
     bus.publish(Message {
         topic: t.clone(),
@@ -141,7 +157,7 @@ async fn root_exports_support_external_publish_and_subscribe() {
 
 #[test]
 fn public_constructor_validation_errors_are_exposed() {
-    let bus = Arc::new(DataBus::<String>::new(4));
+    let bus = Arc::new(DataBus::<String, VEC_CAP, STR_CAP>::new(4));
 
     let producer_error = match ScheduledProducer::new(
         TestProducer,
@@ -159,7 +175,7 @@ fn public_constructor_validation_errors_are_exposed() {
         TestProcessor,
         CounterState::new(0),
         bus.clone(),
-        topic("same"),
+        index("same"),
         topic("same"),
     ) {
         Ok(_) => panic!("expected processor creation to fail"),
@@ -170,7 +186,7 @@ fn public_constructor_validation_errors_are_exposed() {
         TestStorer,
         StringListState::new(Vec::new()),
         bus,
-        topic("input"),
+        index("input"),
     ) {
         // A valid topic was provided so this should succeed; verify the type compiles.
         Ok(_) => BusStorerError::CreationError("Input topic cannot be empty".into()),
@@ -189,7 +205,7 @@ fn public_constructor_validation_errors_are_exposed() {
     ));
     assert_eq!(
         processor_error.to_string(),
-        "Error Creating BusProcessor: Input and output topics must be different"
+        "Error Creating BusProcessor: Input index cannot contain output topic to avoid infinite loops"
     );
 
     assert!(matches!(storer_error, BusStorerError::CreationError(_)));

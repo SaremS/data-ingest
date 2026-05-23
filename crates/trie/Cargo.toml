@@ -1,14 +1,12 @@
 [package]
-name = "databus"
+name = "trie"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arc-swap = "1.9.1"
 arrayvec = "0.7.6"
-async-trait = "0.1.89"
-dashmap = "6.2.1"
-futures = "0.3.32"
 thiserror = "2.0.18"
+
+[dev-dependencies]
 tokio = { version = "1.52.3", features = ["full"] }
-tokio-util = "0.7.18"
-trie = { version = "0.1.0", path = "../trie" }

@@ -2,80 +2,14 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use arrayvec::ArrayVec;
 use thiserror::Error;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct HierarchicalTopic {
-    topic_parts: ArrayVec<String, 5>,
-}
+use trie::hierarchical_index::{HierarchicalTopic, HierarchicalTopicError};
 
 #[derive(Error, Debug)]
-pub enum HierarchicalTopicError {
-    #[error("Maximum topic depth exceeded")]
-    MaxDepthExceeded,
-
-    #[error("Invalid topic format: {0}")]
-    InvalidFormat(Cow<'static, str>),
-}
-
-impl HierarchicalTopic {
-    pub fn new(root: impl Into<String>) -> Self {
-        let mut topic_parts = ArrayVec::new();
-        topic_parts.push(root.into());
-        Self { topic_parts }
-    }
-
-    pub fn add_part(&mut self, part: String) -> Result<(), HierarchicalTopicError> {
-        if self.topic_parts.len() >= 5 {
-            return Err(HierarchicalTopicError::MaxDepthExceeded);
-        }
-        self.topic_parts.push(part);
-        Ok(())
-    }
-
-    pub fn from_str(topic_str: &str) -> Result<Self, HierarchicalTopicError> {
-        let parts: Vec<String> = topic_str
-            .split('.')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if parts.is_empty() {
-            return Err(HierarchicalTopicError::InvalidFormat(
-                "Topic string cannot be empty".into(),
-            ));
-        }
-        if parts.len() > 5 {
-            return Err(HierarchicalTopicError::MaxDepthExceeded);
-        }
-
-        let mut topic_parts = ArrayVec::new();
-        for part in parts {
-            topic_parts.push(part);
-        }
-        Ok(Self { topic_parts })
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.topic_parts.is_empty()
-    }
-
-    pub fn to_string(&self) -> String {
-        self.topic_parts.join(".")
-    }
-}
-
-impl Debug for HierarchicalTopic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "HierarchicalTopic({})", self.to_string())
-    }
-}
-
-impl Into<String> for HierarchicalTopic {
-    fn into(self) -> String {
-        self.to_string()
-    }
+pub enum MessageError {
+    #[error("Invalid topic: {0}")]
+    CreationError(Cow<'static, str>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,30 +26,51 @@ pub struct MessageHeader {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message<T: Clone + Send + Sync> {
-    pub topic: HierarchicalTopic,
+pub struct Message<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
+    pub topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
     pub header: MessageHeader,
     pub payload: T,
 }
 
-pub struct MessageBuilder<T: Clone + Send + Sync> {
-    topic: HierarchicalTopic,
+pub struct MessageBuilder<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
+    topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
     message_type: MessageType,
     message_meta: HashMap<String, String>,
     payload: T,
 }
 
-impl<T: Clone + Send + Sync> MessageBuilder<T> {
-    fn new(payload: T, message_type: MessageType, topic_root: impl Into<String>) -> Self {
+impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
+    MessageBuilder<T, VEC_CAP, STR_CAP>
+{
+    fn new(payload: T, message_type: MessageType, topic_root: &str) -> Result<Self, MessageError> {
+        let topic = HierarchicalTopic::from_str(topic_root).map_err(|e| {
+            MessageError::CreationError(
+                format!("Invalid topic root '{}': {}", topic_root, e).into(),
+            )
+        })?;
+
+        Ok(Self {
+            topic,
+            message_type,
+            message_meta: HashMap::new(),
+            payload,
+        })
+    }
+
+    pub fn new_from_topic(
+        payload: T,
+        message_type: MessageType,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+    ) -> Self {
         Self {
-            topic: HierarchicalTopic::new(topic_root),
+            topic,
             message_type,
             message_meta: HashMap::new(),
             payload,
         }
     }
 
-    pub fn new_from_message(message: Message<T>) -> Self {
+    pub fn new_from_message(message: Message<T, VEC_CAP, STR_CAP>) -> Self {
         Self {
             topic: message.topic,
             message_type: message.header.message_type,
@@ -124,15 +79,23 @@ impl<T: Clone + Send + Sync> MessageBuilder<T> {
         }
     }
 
-    pub fn new_data(payload: T, topic_root: impl Into<String>) -> Self {
+    pub fn new_data(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Data, topic_root)
     }
 
-    pub fn new_empty(payload: T, topic_root: impl Into<String>) -> Self {
+    pub fn new_data_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
+        Self::new_from_topic(payload, MessageType::Data, topic)
+    }
+
+    pub fn new_empty(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Empty, topic_root)
     }
 
-    pub fn new_error(payload: T, topic_root: impl Into<String>) -> Self {
+    pub fn new_empty_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
+        Self::new_from_topic(payload, MessageType::Empty, topic)
+    }
+
+    pub fn new_error(payload: T, topic_root: &str) -> Result<Self, MessageError> {
         Self::new(payload, MessageType::Error, topic_root)
     }
 
@@ -141,12 +104,12 @@ impl<T: Clone + Send + Sync> MessageBuilder<T> {
         self
     }
 
-    pub fn extend_topic(mut self, part: impl Into<String>) -> Result<Self, HierarchicalTopicError> {
-        self.topic.add_part(part.into())?;
+    pub fn extend_topic(mut self, part: &str) -> Result<Self, HierarchicalTopicError> {
+        self.topic.add_part(part)?;
         Ok(self)
     }
 
-    pub fn build(self) -> Message<T> {
+    pub fn build(self) -> Message<T, VEC_CAP, STR_CAP> {
         Message {
             topic: self.topic,
             header: MessageHeader {

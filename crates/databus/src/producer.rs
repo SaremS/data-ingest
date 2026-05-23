@@ -5,12 +5,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    databus::DataBus,
-    message::{HierarchicalTopic, Message},
-    runnable::Runnable,
-    state::State,
-};
+use trie::hierarchical_index::HierarchicalTopic;
+
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 pub enum Schedule {
     Once,
@@ -36,34 +33,52 @@ pub enum ProducerError {
 }
 
 #[async_trait]
-pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn produce(&self, topic: HierarchicalTopic, old_state: S) -> (Message<T>, S);
+pub trait Producer<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+>: Send + Sync
+{
+    async fn produce(
+        &self,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        old_state: S,
+    ) -> (Message<T, VEC_CAP, STR_CAP>, S);
 }
 
 pub struct ScheduledProducer<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
     U: State<S>,
-    V: Producer<T, S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Producer<T, S, VEC_CAP, STR_CAP>,
 > {
     producer: V,
     producer_state: U,
-    bus: Arc<DataBus<T>>,
-    topic: HierarchicalTopic,
+    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+    topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
 }
 
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>>
-    ScheduledProducer<T, S, U, V>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Producer<T, S, VEC_CAP, STR_CAP>,
+> ScheduledProducer<T, S, U, VEC_CAP, STR_CAP, V>
 {
     pub fn new(
         producer: V,
         producer_state: U,
-        bus: Arc<DataBus<T>>,
-        topic: HierarchicalTopic,
+        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
+        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         schedule: Schedule,
     ) -> Result<Self, ProducerError> {
         if topic.is_empty() {
@@ -84,8 +99,14 @@ impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T,
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync, S: Clone + Send + Sync, U: State<S>, V: Producer<T, S>> Runnable
-    for ScheduledProducer<T, S, U, V>
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    U: State<S>,
+    const VEC_CAP: usize,
+    const STR_CAP: usize,
+    V: Producer<T, S, VEC_CAP, STR_CAP>,
+> Runnable for ScheduledProducer<T, S, U, VEC_CAP, STR_CAP, V>
 {
     async fn run(&mut self) {
         loop {
@@ -134,6 +155,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
+    use trie::hierarchical_index::HierarchicalIndex;
 
     struct TestProducer;
 
@@ -162,12 +184,12 @@ mod tests {
     }
 
     #[async_trait]
-    impl Producer<String, i32> for TestProducer {
+    impl Producer<String, i32, 3, 10> for TestProducer {
         async fn produce(
             &self,
-            topic: HierarchicalTopic,
+            topic: HierarchicalTopic<3, 10>,
             old_state: i32,
-        ) -> (Message<String>, i32) {
+        ) -> (Message<String, 3, 10>, i32) {
             (
                 Message {
                     topic,
@@ -182,15 +204,16 @@ mod tests {
         }
     }
 
-    fn topic(s: &str) -> HierarchicalTopic {
-        HierarchicalTopic::new(s)
+    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
+        HierarchicalTopic::from_str(s).unwrap()
+    }
+
+    fn index(s: &str) -> HierarchicalIndex<3, 10> {
+        HierarchicalIndex::from_str(s).unwrap()
     }
 
     #[tokio::test]
     async fn test_scheduled_producer_rejects_empty_topic() {
-        // HierarchicalTopic cannot be constructed as empty via the public API;
-        // the is_empty() guard in ScheduledProducer::new is a safety net.
-        // Verify the error message is correct by constructing the error directly.
         let err = ProducerError::CreationError("Topic cannot be empty".into());
         assert!(matches!(err, ProducerError::CreationError(_)));
         assert_eq!(
@@ -201,15 +224,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_produce_once() {
-        let bus = Arc::new(DataBus::<String>::new(10));
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
         let state = TestState::new(0);
         let state_checker = state.clone();
-        let t = topic("test_topic");
+        let i = index("testtopic");
+        let t = topic("testtopic");
         let mut scheduled_producer =
-            ScheduledProducer::new(TestProducer, state, bus.clone(), t.clone(), Schedule::Once)
-                .unwrap();
+            ScheduledProducer::new(TestProducer, state, bus.clone(), t, Schedule::Once).unwrap();
 
-        let mut rx = bus.subscribe(&t).unwrap();
+        let mut rx = bus.subscribe(&i).unwrap();
 
         scheduled_producer.run().await;
 
@@ -220,10 +243,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_interval_produce() {
-        let bus = Arc::new(DataBus::<String>::new(10));
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
         let state = TestState::new(0);
         let state_checker = state.clone();
-        let t = topic("test_topic");
+        let t = topic("testtopic");
+        let i = index("testtopic");
         let mut scheduled_producer = ScheduledProducer::new(
             TestProducer,
             state,
@@ -233,7 +257,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rx = bus.subscribe(&t).unwrap();
+        let mut rx = bus.subscribe(&i).unwrap();
         let worker = async {
             scheduled_producer.run().await;
         };
@@ -266,13 +290,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_producer_stops_when_bus_is_closed() {
-        let bus = Arc::new(DataBus::<String>::new(10));
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
         let state = TestState::new(0);
         let mut scheduled_producer = ScheduledProducer::new(
             TestProducer,
             state,
             bus.clone(),
-            topic("test_topic"),
+            topic("testtopic"),
             Schedule::Once,
         )
         .unwrap();
@@ -284,13 +308,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_producer_stop_cancels_run_loop() {
-        let bus = Arc::new(DataBus::<String>::new(10));
+        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
         let state = TestState::new(0);
         let mut scheduled_producer = ScheduledProducer::new(
             TestProducer,
             state,
             bus,
-            topic("test_topic"),
+            topic("testtopic"),
             Schedule::Interval(10),
         )
         .unwrap();
