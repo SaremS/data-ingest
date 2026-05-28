@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrayvec::ArrayString;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
@@ -11,7 +12,6 @@ use databus::{
     storer::{BusStorer, BusStorerError, Storer},
 };
 use tokio::sync::Mutex;
-use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
 
 const VEC_CAP: usize = 4;
 const STR_CAP: usize = 32;
@@ -67,15 +67,14 @@ impl State<Vec<String>> for StringListState {
 struct TestProducer;
 
 #[async_trait]
-impl Producer<String, i32, VEC_CAP, STR_CAP> for TestProducer {
+impl Producer<String, i32, STR_CAP> for TestProducer {
     async fn produce(
         &self,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        _topic: ArrayString<STR_CAP>,
         old_state: i32,
-    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
+    ) -> (Arc<Message<String>>, i32) {
         (
             Arc::new(Message {
-                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -90,17 +89,15 @@ impl Producer<String, i32, VEC_CAP, STR_CAP> for TestProducer {
 struct TestProcessor;
 
 #[async_trait]
-impl Processor<String, i32, VEC_CAP, STR_CAP> for TestProcessor {
+impl Processor<String, i32, STR_CAP> for TestProcessor {
     async fn process(
         &self,
-        _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
+        _topic: ArrayString<STR_CAP>,
+        message: Arc<Message<String>>,
         old_state: i32,
-    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
-        let topic = (*message).clone().topic;
+    ) -> (Arc<Message<String>>, i32) {
         (
             Arc::new(Message {
-                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -115,10 +112,10 @@ impl Processor<String, i32, VEC_CAP, STR_CAP> for TestProcessor {
 struct TestStorer;
 
 #[async_trait]
-impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for TestStorer {
+impl Storer<String, Vec<String>> for TestStorer {
     async fn store(
         &self,
-        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
+        message: Arc<Message<String>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
         old_state.push((*message).clone().payload);
@@ -126,28 +123,27 @@ impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for TestStorer {
     }
 }
 
-fn topic(s: &str) -> HierarchicalTopic<VEC_CAP, STR_CAP> {
-    HierarchicalTopic::new(s).unwrap()
-}
-
-fn index(s: &str) -> HierarchicalIndex<VEC_CAP, STR_CAP> {
-    HierarchicalIndex::new(s).unwrap()
+fn topic(s: &str) -> ArrayString<STR_CAP> {
+    ArrayString::from(s).unwrap()
 }
 
 #[tokio::test]
 async fn root_exports_support_external_publish_and_subscribe() {
-    let bus = DataBus::<String, VEC_CAP, STR_CAP>::new(4);
+    let bus = DataBus::<String, STR_CAP>::new(4);
     let t = topic("publictopic");
-    let mut rx = bus.subscribe(&index("publictopic")).unwrap();
+    bus.add_topic(t);
+    let mut rx = bus.subscribe(&topic("publictopic")).unwrap();
 
-    bus.publish(Arc::new(Message {
-        topic: t.clone(),
-        header: MessageHeader {
-            message_type: MessageType::Error,
-            message_meta: HashMap::new(),
-        },
-        payload: "from integration test".to_string(),
-    }))
+    bus.publish(
+        Arc::new(Message {
+            header: MessageHeader {
+                message_type: MessageType::Error,
+                message_meta: HashMap::new(),
+            },
+            payload: "from integration test".to_string(),
+        }),
+        &t,
+    )
     .await
     .unwrap();
 
@@ -158,13 +154,15 @@ async fn root_exports_support_external_publish_and_subscribe() {
 
 #[test]
 fn public_constructor_validation_errors_are_exposed() {
-    let bus = Arc::new(DataBus::<String, VEC_CAP, STR_CAP>::new(4));
+    let bus = Arc::new(DataBus::<String, STR_CAP>::new(4));
+    let t = topic("input");
+    bus.add_topic(t);
 
     let producer_error = match ScheduledProducer::new(
         TestProducer,
         CounterState::new(0),
         bus.clone(),
-        topic("input"),
+        t,
         Schedule::Once,
     ) {
         // A valid topic was provided so this should succeed; we just verify the type compiles.
@@ -172,23 +170,13 @@ fn public_constructor_validation_errors_are_exposed() {
         Err(err) => err,
     };
 
-    let processor_error = match BusProcessor::new(
-        TestProcessor,
-        CounterState::new(0),
-        bus.clone(),
-        index("same"),
-        topic("same"),
-    ) {
-        Ok(_) => panic!("expected processor creation to fail"),
-        Err(err) => err,
-    };
+    let processor_error =
+        match BusProcessor::new(TestProcessor, CounterState::new(0), bus.clone(), t, t) {
+            Ok(_) => panic!("expected processor creation to fail"),
+            Err(err) => err,
+        };
 
-    let storer_error = match BusStorer::new(
-        TestStorer,
-        StringListState::new(Vec::new()),
-        bus,
-        index("input"),
-    ) {
+    let storer_error = match BusStorer::new(TestStorer, StringListState::new(Vec::new()), bus, t) {
         // A valid topic was provided so this should succeed; verify the type compiles.
         Ok(_) => BusStorerError::CreationError("Input topic cannot be empty".into()),
         Err(err) => err,

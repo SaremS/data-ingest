@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrayvec::ArrayString;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
@@ -13,9 +14,7 @@ use databus::{
 };
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep, timeout};
-use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
 
-const VEC_CAP: usize = 4;
 const STR_CAP: usize = 32;
 
 #[derive(Clone)]
@@ -69,16 +68,15 @@ impl State<Vec<String>> for CollectedState {
 struct SequenceProducer;
 
 #[async_trait]
-impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
+impl Producer<String, i32, STR_CAP> for SequenceProducer {
     async fn produce(
         &self,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        _topic: ArrayString<STR_CAP>,
         old_state: i32,
-    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
+    ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
         (
             Arc::new(Message {
-                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -93,17 +91,16 @@ impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
 struct DecoratingProcessor;
 
 #[async_trait]
-impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
+impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
-        _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
+        _topic: ArrayString<STR_CAP>,
+        message: Arc<Message<String>>,
         old_state: i32,
-    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
+    ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
         (
             Arc::new(Message {
-                topic: (*message).clone().topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
@@ -118,10 +115,10 @@ impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
 struct CollectingStorer;
 
 #[async_trait]
-impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for CollectingStorer {
+impl Storer<String, Vec<String>> for CollectingStorer {
     async fn store(
         &self,
-        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
+        message: Arc<Message<String>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
         old_state.push((*message).clone().payload);
@@ -129,23 +126,22 @@ impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for CollectingStorer {
     }
 }
 
-fn topic(s: &str) -> HierarchicalTopic<VEC_CAP, STR_CAP> {
-    HierarchicalTopic::from_str(s).unwrap()
-}
-
-fn index(s: &str) -> HierarchicalIndex<VEC_CAP, STR_CAP> {
-    HierarchicalIndex::from_str(s).unwrap()
+fn topic(s: &str) -> ArrayString<STR_CAP> {
+    ArrayString::from(s).unwrap()
 }
 
 #[tokio::test]
 async fn producer_processor_and_storer_work_together() {
-    let bus = Arc::new(DataBus::<String, VEC_CAP, STR_CAP>::new(8));
+    let bus = Arc::new(DataBus::<String, STR_CAP>::new(8));
     let producer_state = CounterState::new(0);
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
 
     let raw_topic = topic("raw.one");
     let processed_topic = topic("processed.one");
+
+    bus.add_topic(raw_topic.clone());
+    bus.add_topic(processed_topic.clone());
 
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
@@ -160,8 +156,8 @@ async fn producer_processor_and_storer_work_together() {
         DecoratingProcessor,
         processor_state.clone(),
         bus.clone(),
-        index("raw.one"),
-        processed_topic.clone(),
+        raw_topic,
+        processed_topic,
     )
     .unwrap();
 
@@ -169,11 +165,11 @@ async fn producer_processor_and_storer_work_together() {
         CollectingStorer,
         storer_state.clone(),
         bus.clone(),
-        index("processed.*"),
+        processed_topic,
     )
     .unwrap();
 
-    let mut processed_rx = bus.subscribe(&index("processed.one")).unwrap();
+    let mut processed_rx = bus.subscribe(&processed_topic).unwrap();
 
     let processor_worker = async {
         processor.run().await;

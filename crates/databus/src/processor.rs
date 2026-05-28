@@ -2,45 +2,39 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
-
-use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
 #[async_trait]
-pub trait Processor<
-    T: Clone + Send + Sync,
-    S: Clone + Send + Sync,
-    const VEC_CAP: usize,
-    const STR_CAP: usize,
->: Send + Sync
+pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
+    Send + Sync
 {
     async fn process(
         &self,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Arc<Message<T, VEC_CAP, STR_CAP>>,
+        topic: ArrayString<STR_CAP>,
+        message: Arc<Message<T>>,
         old_state: S,
-    ) -> (Arc<Message<T, VEC_CAP, STR_CAP>>, S);
+    ) -> (Arc<Message<T>>, S);
 }
 
 pub struct BusProcessor<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
     U: State<S>,
-    const VEC_CAP: usize,
     const STR_CAP: usize,
-    V: Processor<T, S, VEC_CAP, STR_CAP>,
+    V: Processor<T, S, STR_CAP>,
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-    input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
-    output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-    receiver: Option<Receiver<Arc<Message<T, VEC_CAP, STR_CAP>>>>,
+    bus: Arc<DataBus<T, STR_CAP>>,
+    input_topic: ArrayString<STR_CAP>,
+    output_topic: ArrayString<STR_CAP>,
+    receiver: Option<Receiver<Arc<Message<T>>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -62,19 +56,18 @@ impl<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
     U: State<S>,
-    const VEC_CAP: usize,
     const STR_CAP: usize,
-    V: Processor<T, S, VEC_CAP, STR_CAP>,
-> BusProcessor<T, S, U, VEC_CAP, STR_CAP, V>
+    V: Processor<T, S, STR_CAP>,
+> BusProcessor<T, S, U, STR_CAP, V>
 {
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
-        input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
-        output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        bus: Arc<DataBus<T, STR_CAP>>,
+        input_topic: ArrayString<STR_CAP>,
+        output_topic: ArrayString<STR_CAP>,
     ) -> Result<Self, BusProcessorError> {
-        if input_index.is_empty() {
+        if input_topic.is_empty() {
             return Err(BusProcessorError::CreationError(
                 "Input topic cannot be empty".into(),
             ));
@@ -84,7 +77,7 @@ impl<
                 "Output topic cannot be empty".into(),
             ));
         }
-        if input_index.matches_topic(&output_topic) {
+        if input_topic == output_topic {
             return Err(BusProcessorError::CreationError(
                 "Input index cannot contain output topic to avoid infinite loops".into(),
             ));
@@ -94,7 +87,7 @@ impl<
             processor,
             processor_state,
             bus,
-            input_index,
+            input_topic,
             output_topic,
             receiver: None,
 
@@ -109,14 +102,13 @@ impl<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
     U: State<S>,
-    const VEC_CAP: usize,
     const STR_CAP: usize,
-    V: Processor<T, S, VEC_CAP, STR_CAP>,
-> Runnable for BusProcessor<T, S, U, VEC_CAP, STR_CAP, V>
+    V: Processor<T, S, STR_CAP>,
+> Runnable for BusProcessor<T, S, U, STR_CAP, V>
 {
     async fn run(&mut self) {
         if self.receiver.is_none() {
-            if let Some(rx) = self.bus.subscribe(&self.input_index) {
+            if let Some(rx) = self.bus.subscribe(&self.input_topic) {
                 self.receiver = Some(rx);
             } else {
                 return;
@@ -133,24 +125,23 @@ impl<
 
                 option_msg = receiver.recv() => {
                     match option_msg {
-                        Some(message) => {
+                        Ok(message) => {
                             let old_state = self.processor_state.get_state().await;
                             let (new_message, new_state) =
-                                self.processor.process(message.topic.clone(), message, old_state).await;
-                            let mut modified_inner = (*new_message).clone();
-                            modified_inner.topic = self.output_topic.clone();
+                                self.processor.process(self.input_topic, message, old_state).await;
+
                             self.processor_state.set_state(new_state).await;
 
                             if self
                                 .bus
-                                .publish(Arc::new(modified_inner))
+                                .publish(new_message.clone(), &self.output_topic)
                                 .await
                                 .is_err()
                             {
                                 break;
                             }
                         }
-                        None => {
+                        Err(_) => {
                             break;
                         }
                     }
@@ -200,13 +191,13 @@ mod tests {
     struct MockProcessor;
 
     #[async_trait]
-    impl Processor<String, i32, 3, 10> for MockProcessor {
+    impl Processor<String, i32, 20> for MockProcessor {
         async fn process(
             &self,
-            _topic: HierarchicalTopic<3, 10>,
-            message: Arc<Message<String, 3, 10>>,
+            _topic: ArrayString<20>,
+            message: Arc<Message<String>>,
             old_state: i32,
-        ) -> (Arc<Message<String, 3, 10>>, i32) {
+        ) -> (Arc<Message<String>>, i32) {
             let new_state = old_state + 1;
             (message, new_state)
         }
@@ -215,29 +206,20 @@ mod tests {
     struct SlowProcessor;
 
     #[async_trait]
-    impl Processor<String, i32, 3, 10> for SlowProcessor {
+    impl Processor<String, i32, 20> for SlowProcessor {
         async fn process(
             &self,
-            _topic: HierarchicalTopic<3, 10>,
-            message: Arc<Message<String, 3, 10>>,
+            _topic: ArrayString<20>,
+            message: Arc<Message<String>>,
             old_state: i32,
-        ) -> (Arc<Message<String, 3, 10>>, i32) {
+        ) -> (Arc<Message<String>>, i32) {
             sleep(Duration::from_millis(25)).await;
             (message, old_state + 1)
         }
     }
 
-    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
-        HierarchicalTopic::from_str(s).unwrap()
-    }
-
-    fn index(s: &str) -> HierarchicalIndex<3, 10> {
-        HierarchicalIndex::from_str(s).unwrap()
-    }
-
-    fn test_message() -> Message<String, 3, 10> {
+    fn test_message() -> Message<String> {
         Message {
-            topic: topic("input.topic"),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
@@ -246,23 +228,25 @@ mod tests {
         }
     }
 
+    fn topic(s: &str) -> ArrayString<20> {
+        ArrayString::from(s).unwrap()
+    }
+
     #[tokio::test]
     async fn test_bus_processor_initialization() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
         let processor = MockProcessor;
+        let input_topic = topic("test.input");
+        let output_topic = topic("test.output");
+        bus.add_topic(input_topic);
+        bus.add_topic(output_topic);
 
-        let bus_processor = BusProcessor::new(
-            processor,
-            state,
-            bus,
-            index("test.input"),
-            topic("test.output"),
-        )
-        .unwrap();
+        let bus_processor =
+            BusProcessor::new(processor, state, bus, input_topic, output_topic).unwrap();
 
         assert!(bus_processor.receiver.is_none());
-        assert_eq!(bus_processor.input_index, index("test.input"));
+        assert_eq!(bus_processor.input_topic, topic("test.input"));
         assert_eq!(bus_processor.output_topic, topic("test.output"));
     }
 
@@ -283,8 +267,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            index("input.topic"),
-            topic("output.topic"),
+            ArrayString::from("input.topic").unwrap(),
+            ArrayString::from("output.topic").unwrap(),
         );
         assert!(valid.is_ok());
     }
@@ -294,8 +278,13 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
 
-        let err = match BusProcessor::new(MockProcessor, state, bus, index("topic"), topic("topic"))
-        {
+        let err = match BusProcessor::new(
+            MockProcessor,
+            state,
+            bus,
+            ArrayString::from("topic").unwrap(),
+            ArrayString::from("topic").unwrap(),
+        ) {
             Ok(_) => panic!("expected matching topic validation error"),
             Err(err) => err,
         };
@@ -310,20 +299,18 @@ mod tests {
     #[tokio::test]
     async fn test_bus_processor_run_loop() {
         let bus = Arc::new(DataBus::new(10));
-        let input_index = index("input.topic");
-        let output_topic = topic("output.topic");
+        let input_topic = ArrayString::from("input.topic").unwrap();
+        let output_topic = ArrayString::from("output.topic").unwrap();
+
+        bus.add_topic(input_topic);
+        bus.add_topic(output_topic);
 
         let state = MockState::new(0);
         let state_checker = state.clone();
 
-        let mut bus_processor = BusProcessor::new(
-            MockProcessor,
-            state,
-            bus.clone(),
-            input_index.clone(),
-            output_topic.clone(),
-        )
-        .unwrap();
+        let mut bus_processor =
+            BusProcessor::new(MockProcessor, state, bus.clone(), input_topic, output_topic)
+                .unwrap();
 
         let worker = async {
             bus_processor.run().await;
@@ -331,7 +318,9 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message())).await.unwrap();
+            bus.publish(Arc::new(test_message()), &input_topic)
+                .await
+                .unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -354,8 +343,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            index("input.topic"),
-            topic("output.topic"),
+            ArrayString::from("input.topic").unwrap(),
+            ArrayString::from("output.topic").unwrap(),
         )
         .unwrap();
 
@@ -373,8 +362,8 @@ mod tests {
             MockProcessor,
             state,
             bus,
-            index("input.topic"),
-            topic("output.topic"),
+            ArrayString::from("input.topic").unwrap(),
+            ArrayString::from("output.topic").unwrap(),
         )
         .unwrap();
 
@@ -389,17 +378,15 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
         let state_checker = state.clone();
-        let input_topic = index("input.topic");
-        let output_topic = topic("output.topic");
+        let input_topic = ArrayString::from("input.topic").unwrap();
+        let output_topic = ArrayString::from("output.topic").unwrap();
 
-        let mut bus_processor = BusProcessor::new(
-            SlowProcessor,
-            state,
-            bus.clone(),
-            input_topic.clone(),
-            output_topic,
-        )
-        .unwrap();
+        bus.add_topic(input_topic);
+        bus.add_topic(output_topic);
+
+        let mut bus_processor =
+            BusProcessor::new(SlowProcessor, state, bus.clone(), input_topic, output_topic)
+                .unwrap();
 
         let worker = async {
             bus_processor.run().await;
@@ -407,7 +394,9 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message())).await.unwrap();
+            bus.publish(Arc::new(test_message()), &input_topic)
+                .await
+                .unwrap();
             bus.shutdown();
         };
 
@@ -424,8 +413,8 @@ mod tests {
             MockProcessor,
             state,
             bus.clone(),
-            index("input.topic"),
-            topic("output.topic"),
+            ArrayString::from("input.topic").unwrap(),
+            ArrayString::from("output.topic").unwrap(),
         )
         .unwrap();
 

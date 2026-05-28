@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arc-swap = "1.9.1"
 arrayvec = "0.7.6"
 async-trait = "0.1.89"
 dashmap = "6.2.1"

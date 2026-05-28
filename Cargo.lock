@@ -340,6 +340,7 @@ dependencies = [
 name = "databus"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "arrayvec",
  "async-trait",
  "bytes",
