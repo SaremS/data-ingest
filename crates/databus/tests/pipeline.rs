@@ -74,17 +74,17 @@ impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
         &self,
         topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
         let next = old_state + 1;
         (
-            Message {
+            Arc::new(Message {
                 topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
                 },
                 payload: format!("item-{next}"),
-            },
+            }),
             next,
         )
     }
@@ -97,19 +97,19 @@ impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
         _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
         let next = old_state + 1;
         (
-            Message {
-                topic: message.topic,
+            Arc::new(Message {
+                topic: (*message).clone().topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
                 },
                 payload: format!("{}-processed-{next}", message.payload),
-            },
+            }),
             next,
         )
     }
@@ -121,10 +121,10 @@ struct CollectingStorer;
 impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for CollectingStorer {
     async fn store(
         &self,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
-        old_state.push(message.payload);
+        old_state.push((*message).clone().payload);
         old_state
     }
 }

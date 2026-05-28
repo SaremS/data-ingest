@@ -7,7 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
+use trie::hierarchical_index::HierarchicalIndex;
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
@@ -31,7 +31,7 @@ pub trait Storer<
     const STR_CAP: usize,
 >: Send + Sync
 {
-    async fn store(&self, message: Message<T, VEC_CAP, STR_CAP>, old_state: S) -> S;
+    async fn store(&self, message: Arc<Message<T, VEC_CAP, STR_CAP>>, old_state: S) -> S;
 }
 
 pub struct BusStorer<
@@ -46,7 +46,7 @@ pub struct BusStorer<
     processor_state: U,
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
     input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
-    receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
+    receiver: Option<Receiver<Arc<Message<T, VEC_CAP, STR_CAP>>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -144,6 +144,8 @@ mod tests {
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
 
+    use trie::hierarchical_index::HierarchicalTopic;
+
     #[derive(Clone)]
     struct MockState {
         inner_value: Arc<Mutex<Vec<String>>>,
@@ -174,10 +176,10 @@ mod tests {
     impl Storer<String, Vec<String>, 3, 10> for MockStorer {
         async fn store(
             &self,
-            message: Message<String, 3, 10>,
+            message: Arc<Message<String, 3, 10>>,
             mut old_state: Vec<String>,
         ) -> Vec<String> {
-            old_state.push(message.payload);
+            old_state.push(message.payload.clone());
             old_state
         }
     }
@@ -190,15 +192,15 @@ mod tests {
         HierarchicalIndex::from_str(s).unwrap()
     }
 
-    fn test_message(payload: &str) -> Message<String, 3, 10> {
-        Message {
+    fn test_message(payload: &str) -> Arc<Message<String, 3, 10>> {
+        Arc::new(Message {
             topic: topic("test.input.topic"),
             header: MessageHeader {
                 message_type: MessageType::Data,
                 message_meta: HashMap::new(),
             },
             payload: payload.to_string(),
-        }
+        })
     }
 
     #[tokio::test]

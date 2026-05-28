@@ -22,9 +22,9 @@ pub trait Processor<
     async fn process(
         &self,
         topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Message<T, VEC_CAP, STR_CAP>,
+        message: Arc<Message<T, VEC_CAP, STR_CAP>>,
         old_state: S,
-    ) -> (Message<T, VEC_CAP, STR_CAP>, S);
+    ) -> (Arc<Message<T, VEC_CAP, STR_CAP>>, S);
 }
 
 pub struct BusProcessor<
@@ -40,7 +40,7 @@ pub struct BusProcessor<
     bus: Arc<DataBus<T, VEC_CAP, STR_CAP>>,
     input_index: HierarchicalIndex<VEC_CAP, STR_CAP>,
     output_topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-    receiver: Option<Receiver<Message<T, VEC_CAP, STR_CAP>>>,
+    receiver: Option<Receiver<Arc<Message<T, VEC_CAP, STR_CAP>>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -135,14 +135,15 @@ impl<
                     match option_msg {
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
-                            let (mut new_message, new_state) =
+                            let (new_message, new_state) =
                                 self.processor.process(message.topic.clone(), message, old_state).await;
-                            new_message.topic = self.output_topic.clone();
+                            let mut modified_inner = (*new_message).clone();
+                            modified_inner.topic = self.output_topic.clone();
                             self.processor_state.set_state(new_state).await;
 
                             if self
                                 .bus
-                                .publish(new_message)
+                                .publish(Arc::new(modified_inner))
                                 .await
                                 .is_err()
                             {
@@ -203,9 +204,9 @@ mod tests {
         async fn process(
             &self,
             _topic: HierarchicalTopic<3, 10>,
-            message: Message<String, 3, 10>,
+            message: Arc<Message<String, 3, 10>>,
             old_state: i32,
-        ) -> (Message<String, 3, 10>, i32) {
+        ) -> (Arc<Message<String, 3, 10>>, i32) {
             let new_state = old_state + 1;
             (message, new_state)
         }
@@ -218,9 +219,9 @@ mod tests {
         async fn process(
             &self,
             _topic: HierarchicalTopic<3, 10>,
-            message: Message<String, 3, 10>,
+            message: Arc<Message<String, 3, 10>>,
             old_state: i32,
-        ) -> (Message<String, 3, 10>, i32) {
+        ) -> (Arc<Message<String, 3, 10>>, i32) {
             sleep(Duration::from_millis(25)).await;
             (message, old_state + 1)
         }
@@ -330,7 +331,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(test_message()).await.unwrap();
+            bus.publish(Arc::new(test_message())).await.unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -406,7 +407,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(test_message()).await.unwrap();
+            bus.publish(Arc::new(test_message())).await.unwrap();
             bus.shutdown();
         };
 

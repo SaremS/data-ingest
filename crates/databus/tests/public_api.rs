@@ -72,16 +72,16 @@ impl Producer<String, i32, VEC_CAP, STR_CAP> for TestProducer {
         &self,
         topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
         (
-            Message {
+            Arc::new(Message {
                 topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
                 },
                 payload: format!("value-{}", old_state + 1),
-            },
+            }),
             old_state + 1,
         )
     }
@@ -94,18 +94,19 @@ impl Processor<String, i32, VEC_CAP, STR_CAP> for TestProcessor {
     async fn process(
         &self,
         _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String, VEC_CAP, STR_CAP>>, i32) {
+        let topic = (*message).clone().topic;
         (
-            Message {
-                topic: message.topic,
+            Arc::new(Message {
+                topic,
                 header: MessageHeader {
                     message_type: MessageType::Data,
                     message_meta: HashMap::new(),
                 },
                 payload: format!("{}-processed", message.payload),
-            },
+            }),
             old_state + 1,
         )
     }
@@ -117,10 +118,10 @@ struct TestStorer;
 impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for TestStorer {
     async fn store(
         &self,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        message: Arc<Message<String, VEC_CAP, STR_CAP>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
-        old_state.push(message.payload);
+        old_state.push((*message).clone().payload);
         old_state
     }
 }
@@ -139,14 +140,14 @@ async fn root_exports_support_external_publish_and_subscribe() {
     let t = topic("publictopic");
     let mut rx = bus.subscribe(&index("publictopic")).unwrap();
 
-    bus.publish(Message {
+    bus.publish(Arc::new(Message {
         topic: t.clone(),
         header: MessageHeader {
             message_type: MessageType::Error,
             message_meta: HashMap::new(),
         },
         payload: "from integration test".to_string(),
-    })
+    }))
     .await
     .unwrap();
 

@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering}
+};
 
 use tokio::sync::mpsc;
 
@@ -10,7 +13,7 @@ use trie::{
 use crate::message::Message;
 
 pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
-    topics: TrieIndex<mpsc::Sender<Message<T, VEC_CAP, STR_CAP>>, VEC_CAP, STR_CAP>,
+    topics: TrieIndex<mpsc::Sender<Arc<Message<T, VEC_CAP, STR_CAP>>>, VEC_CAP, STR_CAP>,
     channel_capacity: usize,
     is_closed: AtomicBool,
 }
@@ -34,7 +37,7 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
     pub fn subscribe(
         &self,
         topic_index: &HierarchicalIndex<VEC_CAP, STR_CAP>,
-    ) -> Option<mpsc::Receiver<Message<T, VEC_CAP, STR_CAP>>> {
+    ) -> Option<mpsc::Receiver<Arc<Message<T, VEC_CAP, STR_CAP>>>> {
         if self.is_closed.load(Ordering::SeqCst) {
             return None;
         }
@@ -46,7 +49,7 @@ impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
         Some(rx)
     }
 
-    pub async fn publish(&self, message: Message<T, VEC_CAP, STR_CAP>) -> Result<(), &'static str> {
+    pub async fn publish(&self, message: Arc<Message<T, VEC_CAP, STR_CAP>>) -> Result<(), &'static str> {
         if self.is_closed.load(Ordering::SeqCst) {
             return Err("Bus is closed");
         }
@@ -89,7 +92,8 @@ mod tests {
         HierarchicalIndex::from_str(s).unwrap()
     }
 
-    fn test_message(payload: impl Into<String>, t: &str) -> Message<String, 3, 10> {
+    fn test_message(payload: impl Into<String>, t: &str) -> Arc<Message<String, 3, 10>> {
+        Arc::new(
         Message {
             topic: topic(t),
             header: MessageHeader {
@@ -98,6 +102,7 @@ mod tests {
             },
             payload: payload.into(),
         }
+        )
     }
 
     #[tokio::test]

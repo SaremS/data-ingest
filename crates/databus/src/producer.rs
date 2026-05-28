@@ -44,7 +44,7 @@ pub trait Producer<
         &self,
         topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
         old_state: S,
-    ) -> (Message<T, VEC_CAP, STR_CAP>, S);
+    ) -> (Arc<Message<T, VEC_CAP, STR_CAP>>, S);
 }
 
 pub struct ScheduledProducer<
@@ -189,8 +189,8 @@ mod tests {
             &self,
             topic: HierarchicalTopic<3, 10>,
             old_state: i32,
-        ) -> (Message<String, 3, 10>, i32) {
-            (
+        ) -> (Arc<Message<String, 3, 10>>, i32) {
+            (Arc::new(
                 Message {
                     topic,
                     header: MessageHeader {
@@ -198,7 +198,7 @@ mod tests {
                         message_meta: HashMap::new(),
                     },
                     payload: format!("test data {}", old_state + 1),
-                },
+                }),
                 old_state + 1,
             )
         }
