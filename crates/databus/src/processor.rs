@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::{Sender, Receiver};
 use tokio_util::sync::CancellationToken;
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
@@ -34,6 +34,7 @@ pub struct BusProcessor<
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
+    sender: Option<Sender<Arc<Message<T>>>>,
     receiver: Option<Receiver<Arc<Message<T>>>>,
 
     cancellation_token: CancellationToken,
@@ -89,6 +90,7 @@ impl<
             bus,
             input_topic,
             output_topic,
+            sender: None,
             receiver: None,
 
             cancellation_token: CancellationToken::new(),
@@ -107,6 +109,14 @@ impl<
 > Runnable for BusProcessor<T, S, U, STR_CAP, V>
 {
     async fn run(&mut self) {
+        if self.sender.is_none() {
+            if let Some(tx) = self.bus.get_sender(&self.output_topic) {
+                self.sender = Some(tx);
+            } else {
+                return;
+            }
+        }
+
         if self.receiver.is_none() {
             if let Some(rx) = self.bus.subscribe(&self.input_topic) {
                 self.receiver = Some(rx);
@@ -132,14 +142,14 @@ impl<
 
                             self.processor_state.set_state(new_state).await;
 
-                            if self
-                                .bus
-                                .publish(new_message.clone(), &self.output_topic)
-                                .await
-                                .is_err()
-                            {
+                            if let Some(sender) = &self.sender {
+                                if let Err(_e) = sender.send(new_message) {
+                                    break;
+                                }
+                            } else {
                                 break;
                             }
+
                         }
                         Err(_) => {
                             break;
@@ -319,7 +329,6 @@ mod tests {
             sleep(Duration::from_millis(10)).await;
 
             bus.publish(Arc::new(test_message()), &input_topic)
-                .await
                 .unwrap();
 
             sleep(Duration::from_millis(50)).await;
@@ -395,7 +404,6 @@ mod tests {
             sleep(Duration::from_millis(10)).await;
 
             bus.publish(Arc::new(test_message()), &input_topic)
-                .await
                 .unwrap();
             bus.shutdown();
         };

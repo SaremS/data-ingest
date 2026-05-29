@@ -26,12 +26,12 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
     }
 
     pub fn shutdown(&self) {
-        self.is_closed.store(true, Ordering::SeqCst);
+        self.is_closed.store(true, Ordering::Release);
         self.topics.store(Arc::new(HashMap::new()));
     }
 
     pub fn add_topic(&self, topic_index: ArrayString<STR_CAP>) {
-        if self.is_closed.load(Ordering::SeqCst) {
+        if self.is_closed.load(Ordering::Acquire) {
             return;
         }
 
@@ -42,7 +42,7 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
     }
 
     pub fn subscribe(&self, topic: &str) -> Option<broadcast::Receiver<Arc<Message<T>>>> {
-        if self.is_closed.load(Ordering::SeqCst) {
+        if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
 
@@ -52,7 +52,18 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
             .map(|sender| sender.subscribe())
     }
 
-    pub async fn publish(&self, message: Arc<Message<T>>, topic: &str) -> Result<(), &'static str> {
+    pub fn get_sender(&self, topic: &str) -> Option<broadcast::Sender<Arc<Message<T>>>> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return None;
+        }
+
+        self.topics
+            .load()
+            .get(topic)
+            .cloned()
+    }
+
+    pub fn publish(&self, message: Arc<Message<T>>, topic: &str) -> Result<(), &'static str> {
         if self.is_closed.load(Ordering::SeqCst) {
             return Err("Bus is closed");
         }
@@ -97,7 +108,6 @@ mod tests {
         let mut rx = bus.subscribe(&topic).unwrap();
 
         bus.publish(test_message("Hello, DataBus!"), &topic)
-            .await
             .unwrap();
 
         let received = rx.recv().await.expect("Failed to receive message");
@@ -123,13 +133,11 @@ mod tests {
 
                 bus_clone
                     .publish(test_message("Response from listener"), &response_topic)
-                    .await
                     .unwrap();
             }
         });
 
         bus.publish(test_message("Request to listener"), &request_topic)
-            .await
             .unwrap();
 
         let received = response_rx
@@ -150,7 +158,7 @@ mod tests {
         let mut rx2 = bus.subscribe(&topic).unwrap();
         let mut rx3 = bus.subscribe(&topic).unwrap();
 
-        bus.publish(test_message("test"), &topic).await.unwrap();
+        bus.publish(test_message("test"), &topic).unwrap();
 
         assert_eq!(rx1.recv().await.unwrap().payload, "test");
         assert_eq!(rx2.recv().await.unwrap().payload, "test");
@@ -174,7 +182,6 @@ mod tests {
 
         assert!(
             bus.publish(test_message("fail"), &another_topic)
-                .await
                 .is_err()
         );
 

@@ -229,7 +229,6 @@ mod tests {
             sleep(Duration::from_millis(10)).await;
 
             bus.publish(test_message("stored value"), &input_topic)
-                .await
                 .unwrap();
 
             sleep(Duration::from_millis(25)).await;

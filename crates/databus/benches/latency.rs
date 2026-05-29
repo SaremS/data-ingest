@@ -9,9 +9,8 @@ use databus::{
     databus::DataBus,
     message::{Message, MessageHeader, MessageType},
 };
-use tokio::{runtime::Runtime, sync::broadcast::Receiver};
+use tokio::{runtime::Runtime, sync::broadcast::{Receiver, Sender}};
 
-const VEC_CAP: usize = 8;
 const STR_CAP: usize = 32;
 const CHANNEL_CAPACITY: usize = 1024;
 const TOPIC: &str = "feed.nasdaq";
@@ -19,6 +18,8 @@ const TOPIC: &str = "feed.nasdaq";
 type BenchMessage = Message<Bytes>;
 type BenchBus = DataBus<Bytes, STR_CAP>;
 type BenchReceiver = Receiver<Arc<BenchMessage>>;
+type BenchSender = Sender<Arc<BenchMessage>>;
+
 
 fn topic(t: &str) -> ArrayString<STR_CAP> {
     ArrayString::from(t).unwrap()
@@ -36,7 +37,7 @@ fn message() -> BenchMessage {
 
 fn setup_publish_case(
     subscriber_count: usize,
-) -> (BenchBus, Vec<BenchReceiver>, Arc<BenchMessage>) {
+) -> (Vec<BenchReceiver>, Arc<BenchMessage>, BenchSender) {
     let bus = BenchBus::new(CHANNEL_CAPACITY);
     let mut receivers = Vec::with_capacity(subscriber_count);
 
@@ -48,7 +49,9 @@ fn setup_publish_case(
         receivers.push(receiver);
     }
 
-    (bus, receivers, Arc::new(message()))
+    let sender = bus.get_sender(&t).expect("get sender");
+
+    (receivers, Arc::new(message()), sender)
 }
 
 async fn drain(receivers: &mut [BenchReceiver]) {
@@ -60,7 +63,6 @@ async fn drain(receivers: &mut [BenchReceiver]) {
 fn publish_benches(c: &mut Criterion) {
     let runtime = Runtime::new().expect("criterion tokio runtime");
     let mut group = c.benchmark_group("databus_publish");
-    let t = topic(TOPIC);
 
     for subscribers in [1_usize, 4, 8, 16, 32] {
         group.throughput(Throughput::Elements(subscribers as u64));
@@ -70,8 +72,8 @@ fn publish_benches(c: &mut Criterion) {
             |b, &subscriber_count| {
                 b.to_async(&runtime).iter_batched(
                     || setup_publish_case(subscriber_count),
-                    |(bus, mut receivers, msg)| async move {
-                        bus.publish(msg, &t).await.expect("publish");
+                    |(mut receivers, msg, sender)| async move {
+                        sender.send(msg.clone()).expect("publish");
                         drain(&mut receivers).await;
                     },
                     BatchSize::SmallInput,

@@ -144,7 +144,6 @@ async fn root_exports_support_external_publish_and_subscribe() {
         }),
         &t,
     )
-    .await
     .unwrap();
 
     let received = rx.recv().await.expect("message should be received");

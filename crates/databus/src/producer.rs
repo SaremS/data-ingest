@@ -5,6 +5,7 @@ use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+use tokio::sync::broadcast::Sender;
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 
@@ -49,6 +50,7 @@ pub struct ScheduledProducer<
     producer_state: U,
     bus: Arc<DataBus<T, STR_CAP>>,
     topic: ArrayString<STR_CAP>,
+    sender: Option<Sender<Arc<Message<T>>>>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
@@ -74,11 +76,14 @@ impl<
             return Err(ProducerError::CreationError("Topic cannot be empty".into()));
         }
 
+        let sender = bus.get_sender(&topic);
+
         Ok(Self {
             producer,
             producer_state,
             bus,
             topic,
+            sender,
 
             schedule,
             cancellation_token: CancellationToken::new(),
@@ -106,7 +111,11 @@ impl<
                     let old_state = self.producer_state.get_state().await;
                     let (message, new_state) = self.producer.produce(self.topic.clone(), old_state).await;
 
-                    if let Err(_e) = self.bus.publish(message, &self.topic).await {
+                    if let Some(sender) = &self.sender {
+                        if sender.send(message).is_err() {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
 
