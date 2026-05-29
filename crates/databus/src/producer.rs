@@ -4,8 +4,8 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 use tokio::sync::broadcast::Sender;
+use tokio_util::sync::CancellationToken;
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
 

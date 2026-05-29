@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::broadcast::{Sender, Receiver};
+use tokio::sync::broadcast::{Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
@@ -328,8 +328,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message()), &input_topic)
-                .unwrap();
+            bus.publish(Arc::new(test_message()), &input_topic).unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -403,8 +402,7 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message()), &input_topic)
-                .unwrap();
+            bus.publish(Arc::new(test_message()), &input_topic).unwrap();
             bus.shutdown();
         };
 

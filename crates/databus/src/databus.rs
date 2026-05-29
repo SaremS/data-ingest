@@ -57,10 +57,7 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
             return None;
         }
 
-        self.topics
-            .load()
-            .get(topic)
-            .cloned()
+        self.topics.load().get(topic).cloned()
     }
 
     pub fn publish(&self, message: Arc<Message<T>>, topic: &str) -> Result<(), &'static str> {
@@ -180,10 +177,7 @@ mod tests {
 
         assert!(bus.subscribe(&another_topic).is_none());
 
-        assert!(
-            bus.publish(test_message("fail"), &another_topic)
-                .is_err()
-        );
+        assert!(bus.publish(test_message("fail"), &another_topic).is_err());
 
         assert!(rx.recv().await.is_err());
     }

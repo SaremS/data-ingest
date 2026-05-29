@@ -9,7 +9,10 @@ use databus::{
     databus::DataBus,
     message::{Message, MessageHeader, MessageType},
 };
-use tokio::{runtime::Runtime, sync::broadcast::{Receiver, Sender}};
+use tokio::{
+    runtime::Runtime,
+    sync::broadcast::{Receiver, Sender},
+};
 
 const STR_CAP: usize = 32;
 const CHANNEL_CAPACITY: usize = 1024;
@@ -19,7 +22,6 @@ type BenchMessage = Message<Bytes>;
 type BenchBus = DataBus<Bytes, STR_CAP>;
 type BenchReceiver = Receiver<Arc<BenchMessage>>;
 type BenchSender = Sender<Arc<BenchMessage>>;
-
 
 fn topic(t: &str) -> ArrayString<STR_CAP> {
     ArrayString::from(t).unwrap()
