@@ -220,6 +220,7 @@ mod tests {
         let state = TestState::new(0);
         let state_checker = state.clone();
         let t = topic("testtopic");
+        bus.add_topic(t);
         let mut scheduled_producer =
             ScheduledProducer::new(TestProducer, state, bus.clone(), t, Schedule::Once).unwrap();
 
@@ -238,33 +239,29 @@ mod tests {
         let state = TestState::new(0);
         let state_checker = state.clone();
         let t = topic("testtopic");
-        let mut scheduled_producer = ScheduledProducer::new(
-            TestProducer,
-            state,
-            bus.clone(),
-            t.clone(),
-            Schedule::Interval(10),
-        )
-        .unwrap();
+        bus.add_topic(t);
+
+        let mut scheduled_producer =
+            ScheduledProducer::new(TestProducer, state, bus.clone(), t, Schedule::Interval(10))
+                .unwrap();
 
         let mut rx = bus.subscribe(&t).unwrap();
-        let worker = async {
+        let cancellation_token = scheduled_producer.cancellation_token.clone();
+        let worker = tokio::spawn(async move {
             scheduled_producer.run().await;
-        };
-        let driver = async {
-            let msg1 = rx.recv().await.expect("Failed to receive message 1");
-            assert_eq!(msg1.payload, "test data 1");
+        });
 
-            let msg2 = rx.recv().await.expect("Failed to receive message 2");
-            assert_eq!(msg2.payload, "test data 2");
+        let msg1 = rx.recv().await.expect("Failed to receive message 1");
+        assert_eq!(msg1.payload, "test data 1");
 
-            let msg3 = rx.recv().await.expect("Failed to receive message 3");
-            assert_eq!(msg3.payload, "test data 3");
+        let msg2 = rx.recv().await.expect("Failed to receive message 2");
+        assert_eq!(msg2.payload, "test data 2");
 
-            bus.shutdown();
-        };
+        let msg3 = rx.recv().await.expect("Failed to receive message 3");
+        assert_eq!(msg3.payload, "test data 3");
 
-        tokio::join!(worker, driver);
+        cancellation_token.cancel();
+        worker.await.unwrap();
 
         assert_eq!(state_checker.get_state().await, 3);
     }

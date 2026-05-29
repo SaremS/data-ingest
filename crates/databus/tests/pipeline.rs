@@ -140,14 +140,14 @@ async fn producer_processor_and_storer_work_together() {
     let raw_topic = topic("raw.one");
     let processed_topic = topic("processed.one");
 
-    bus.add_topic(raw_topic.clone());
-    bus.add_topic(processed_topic.clone());
+    bus.add_topic(raw_topic);
+    bus.add_topic(processed_topic);
 
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
         producer_state.clone(),
         bus.clone(),
-        raw_topic.clone(),
+        raw_topic,
         Schedule::Once,
     )
     .unwrap();
@@ -171,28 +171,29 @@ async fn producer_processor_and_storer_work_together() {
 
     let mut processed_rx = bus.subscribe(&processed_topic).unwrap();
 
-    let processor_worker = async {
+    let processor_worker = tokio::spawn(async move {
         processor.run().await;
-    };
-    let storer_worker = async {
+    });
+    let storer_worker = tokio::spawn(async move {
         storer.run().await;
-    };
-    let driver = async {
-        sleep(Duration::from_millis(10)).await;
-        producer.run().await;
+    });
 
-        let received = timeout(Duration::from_millis(200), processed_rx.recv())
-            .await
-            .expect("timed out waiting for processed message")
-            .expect("processed message should be received");
+    sleep(Duration::from_millis(10)).await;
+    producer.run().await;
+    drop(producer);
 
-        assert_eq!(received.payload, "item-1-processed-1");
+    let received = timeout(Duration::from_millis(200), processed_rx.recv())
+        .await
+        .expect("timed out waiting for processed message")
+        .expect("processed message should be received");
 
-        sleep(Duration::from_millis(20)).await;
-        bus.shutdown();
-    };
+    assert_eq!(received.payload, "item-1-processed-1");
 
-    tokio::join!(processor_worker, storer_worker, driver);
+    sleep(Duration::from_millis(20)).await;
+    bus.shutdown();
+
+    processor_worker.await.unwrap();
+    storer_worker.await.unwrap();
 
     assert_eq!(producer_state.get_state().await, 1);
     assert_eq!(processor_state.get_state().await, 1);

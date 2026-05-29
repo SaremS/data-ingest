@@ -365,6 +365,8 @@ mod tests {
     #[tokio::test]
     async fn test_bus_processor_stop_cancels_run_loop() {
         let bus = Arc::new(DataBus::new(10));
+        bus.add_topic(ArrayString::from("input.topic").unwrap());
+        bus.add_topic(ArrayString::from("output.topic").unwrap());
         let state = MockState::new(0);
         let mut bus_processor = BusProcessor::new(
             MockProcessor,
