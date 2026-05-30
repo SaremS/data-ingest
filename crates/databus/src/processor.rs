@@ -5,10 +5,11 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::broadcast::{Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State,
+    send_receive_handles::{SendHandle, ReceiveHandle}
+};
 
 #[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
@@ -34,8 +35,8 @@ pub struct BusProcessor<
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
-    sender: Option<Sender<Arc<Message<T>>>>,
-    receiver: Option<Receiver<Arc<Message<T>>>>,
+    sender: Option<SendHandle<Arc<Message<T>>>>,
+    receiver: Option<ReceiveHandle<Arc<Message<T>>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -133,17 +134,17 @@ impl<
                     break;
                 }
 
-                option_msg = receiver.recv() => {
+                option_msg = receiver.receive() => {
                     match option_msg {
-                        Ok(message) => {
+                        Some(message) => {
                             let old_state = self.processor_state.get_state().await;
                             let (new_message, new_state) =
-                                self.processor.process(self.input_topic, message, old_state).await;
+                                self.processor.process(self.input_topic.clone(), message, old_state).await;
 
                             self.processor_state.set_state(new_state).await;
 
                             if let Some(sender) = &self.sender {
-                                if let Err(_e) = sender.send(new_message) {
+                                if sender.send(new_message).await.is_err() {
                                     break;
                                 }
                             } else {
@@ -151,7 +152,7 @@ impl<
                             }
 
                         }
-                        Err(_) => {
+                        None => {
                             break;
                         }
                     }
@@ -328,7 +329,8 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message()), &input_topic).unwrap();
+            let sender = bus.get_sender(&input_topic).unwrap();
+            sender.send(Arc::new(test_message())).await.unwrap();
 
             sleep(Duration::from_millis(50)).await;
             bus.shutdown();
@@ -404,7 +406,8 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(Arc::new(test_message()), &input_topic).unwrap();
+            let sender = bus.get_sender(&input_topic).unwrap();
+            sender.send(Arc::new(test_message())).await.unwrap();
             bus.shutdown();
         };
 

@@ -5,10 +5,11 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State,
+    send_receive_handles::ReceiveHandle
+};
 
 #[derive(Error, Debug)]
 pub enum BusStorerError {
@@ -38,7 +39,7 @@ pub struct BusStorer<
     processor_state: U,
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
-    receiver: Option<Receiver<Arc<Message<T>>>>,
+    receiver: Option<ReceiveHandle<Arc<Message<T>>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -103,15 +104,15 @@ impl<
                     break;
                 }
 
-                result_msg = receiver.recv() => {
+                result_msg = receiver.receive() => {
                     match result_msg {
-                        Ok(message) => {
+                        Some(message) => {
                             let old_state = self.processor_state.get_state().await;
                             let new_state =
                                 self.processor.store(message, old_state).await;
                             self.processor_state.set_state(new_state).await;
                         }
-                        Err(_) => {
+                        None => {
                             break;
                         }
                     }
@@ -228,8 +229,8 @@ mod tests {
         let driver = async {
             sleep(Duration::from_millis(10)).await;
 
-            bus.publish(test_message("stored value"), &input_topic)
-                .unwrap();
+            let sender = bus.get_sender(&input_topic).unwrap();
+            sender.send(test_message("stored value")).await.unwrap();
 
             sleep(Duration::from_millis(25)).await;
             bus.shutdown();

@@ -2,24 +2,33 @@ use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    Mutex    
 };
 
-use arc_swap::ArcSwap;
 use arrayvec::ArrayString;
-use tokio::sync::{broadcast, mpsc};
+use thiserror::Error;
 
 use crate::message::Message;
+use crate::send_receive_handles::{ReceiveHandle, SendHandle, create_send_receive_handles};
 
 pub struct DataBus<T: Clone + Send + Sync, const STR_CAP: usize> {
-    topics: ArcSwap<HashMap<ArrayString<STR_CAP>, broadcast::Sender<Arc<Message<T>>>>>,
+    senders: Mutex<HashMap<ArrayString<STR_CAP>, SendHandle<Arc<Message<T>>>>>,
+    receivers: Mutex<HashMap<ArrayString<STR_CAP>, Option<ReceiveHandle<Arc<Message<T>>>>>>,
     channel_capacity: usize,
     is_closed: AtomicBool,
+}
+
+#[derive(Error, Debug)]
+pub enum SubscribeError {
+    #[error("All available receivers are leased")]
+    OutOfReceivers 
 }
 
 impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
     pub fn new(channel_capacity: usize) -> Self {
         DataBus {
-            topics: ArcSwap::from_pointee(HashMap::new()),
+            senders: Mutex::new(HashMap::new()),
+            receivers: Mutex::new(HashMap::new()),
             channel_capacity,
             is_closed: AtomicBool::new(false),
         }
@@ -27,7 +36,11 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
 
     pub fn shutdown(&self) {
         self.is_closed.store(true, Ordering::Release);
-        self.topics.store(Arc::new(HashMap::new()));
+        let mut sender_guard = self.senders.lock().unwrap();
+        *sender_guard = HashMap::new();
+
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        *receiver_guard = HashMap::new();
     }
 
     pub fn add_topic(&self, topic_index: ArrayString<STR_CAP>) {
@@ -35,46 +48,40 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
             return;
         }
 
-        let mut new_topics: HashMap<ArrayString<STR_CAP>, _> = self.topics.load().as_ref().clone();
-        new_topics.insert(topic_index, broadcast::channel(self.channel_capacity).0);
+        let (sender, receiver) = create_send_receive_handles(self.channel_capacity);
 
-        self.topics.store(Arc::new(new_topics));
+        let mut sender_guard = self.senders.lock().unwrap();
+        sender_guard.insert(topic_index, sender);
+        
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        receiver_guard.insert(topic_index, Some(receiver));
     }
 
-    pub fn subscribe(&self, topic: &str) -> Option<broadcast::Receiver<Arc<Message<T>>>> {
+    pub fn subscribe(&self, topic: &str) -> Option<ReceiveHandle<Arc<Message<T>>>> {
         if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
 
-        self.topics
-            .load()
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        
+        receiver_guard
+            .get_mut(topic)
+            .and_then(|receiver| std::mem::take(receiver))
+    }
+
+
+    pub fn get_sender(&self, topic: &str) -> Option<SendHandle<Arc<Message<T>>>> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return None;
+        }
+
+        let sender_guard = self.senders.lock().unwrap();
+
+        sender_guard
             .get(topic)
-            .map(|sender| sender.subscribe())
+            .cloned() 
     }
 
-    pub fn get_sender(&self, topic: &str) -> Option<broadcast::Sender<Arc<Message<T>>>> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return None;
-        }
-
-        self.topics.load().get(topic).cloned()
-    }
-
-    pub fn publish(&self, message: Arc<Message<T>>, topic: &str) -> Result<(), &'static str> {
-        if self.is_closed.load(Ordering::SeqCst) {
-            return Err("Bus is closed");
-        }
-
-        for tx in self.topics.load().get(topic).into_iter() {
-            let send_result = tx.send(message.clone());
-            if send_result.is_err() {
-                // If the channel is closed, we ignore it since it means there are no active subscribers
-                continue;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -104,10 +111,13 @@ mod tests {
 
         let mut rx = bus.subscribe(&topic).unwrap();
 
-        bus.publish(test_message("Hello, DataBus!"), &topic)
+        let tx = bus.get_sender(&topic).unwrap();
+
+        tx.send(test_message("Hello, DataBus!"))
+            .await
             .unwrap();
 
-        let received = rx.recv().await.expect("Failed to receive message");
+        let received = rx.receive().await.expect("Failed to receive message");
         assert_eq!(received.payload, "Hello, DataBus!");
     }
 
@@ -125,20 +135,23 @@ mod tests {
 
         let bus_clone = bus.clone();
         tokio::spawn(async move {
-            while let Ok(request) = request_rx.recv().await {
+            while let Some(request) = request_rx.receive().await {
                 assert_eq!(request.payload, "Request to listener".to_string());
 
-                bus_clone
-                    .publish(test_message("Response from listener"), &response_topic)
-                    .unwrap();
+                let tx = bus.get_sender(&response_topic).unwrap();
+                tx.send(test_message("Response from listener")).await.unwrap();
+
             }
         });
 
-        bus.publish(test_message("Request to listener"), &request_topic)
+        let tx = bus_clone.get_sender(&request_topic).unwrap();
+        tx.send(test_message("Request to listener"))
+            .await
             .unwrap();
 
+
         let received = response_rx
-            .recv()
+            .receive()
             .await
             .expect("Failed to receive response");
         assert_eq!(received.payload, "Response from listener".to_string());
@@ -152,14 +165,13 @@ mod tests {
         bus.add_topic(ArrayString::from(topic).unwrap());
 
         let mut rx1 = bus.subscribe(&topic).unwrap();
-        let mut rx2 = bus.subscribe(&topic).unwrap();
-        let mut rx3 = bus.subscribe(&topic).unwrap();
 
-        bus.publish(test_message("test"), &topic).unwrap();
+        let tx = bus.get_sender(&topic).unwrap();
+        tx.send(test_message("test"))
+            .await
+            .unwrap();
 
-        assert_eq!(rx1.recv().await.unwrap().payload, "test");
-        assert_eq!(rx2.recv().await.unwrap().payload, "test");
-        assert_eq!(rx3.recv().await.unwrap().payload, "test");
+        assert_eq!(rx1.receive().await.unwrap().payload, "test");
     }
 
     #[tokio::test]
@@ -176,9 +188,8 @@ mod tests {
         bus.shutdown();
 
         assert!(bus.subscribe(&another_topic).is_none());
+        assert!(bus.get_sender(&another_topic).is_none());
 
-        assert!(bus.publish(test_message("fail"), &another_topic).is_err());
-
-        assert!(rx.recv().await.is_err());
+        assert!(rx.receive().await.is_none());
     }
 }

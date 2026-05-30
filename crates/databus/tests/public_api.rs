@@ -13,7 +13,6 @@ use databus::{
 };
 use tokio::sync::Mutex;
 
-const VEC_CAP: usize = 4;
 const STR_CAP: usize = 32;
 
 #[derive(Clone)]
@@ -133,8 +132,9 @@ async fn root_exports_support_external_publish_and_subscribe() {
     let t = topic("publictopic");
     bus.add_topic(t);
     let mut rx = bus.subscribe(&topic("publictopic")).unwrap();
+    let tx = bus.get_sender(&t).unwrap();
 
-    bus.publish(
+    tx.send(
         Arc::new(Message {
             header: MessageHeader {
                 message_type: MessageType::Error,
@@ -142,11 +142,11 @@ async fn root_exports_support_external_publish_and_subscribe() {
             },
             payload: "from integration test".to_string(),
         }),
-        &t,
     )
+    .await
     .unwrap();
 
-    let received = rx.recv().await.expect("message should be received");
+    let received = rx.receive().await.expect("message should be received");
     assert_eq!(received.header.message_type, MessageType::Error);
     assert_eq!(received.payload, "from integration test");
 }

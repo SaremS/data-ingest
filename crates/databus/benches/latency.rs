@@ -8,11 +8,9 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use databus::{
     databus::DataBus,
     message::{Message, MessageHeader, MessageType},
+    send_receive_handles::{ReceiveHandle, SendHandle},
 };
-use tokio::{
-    runtime::Runtime,
-    sync::broadcast::{Receiver, Sender},
-};
+use tokio::runtime::Runtime;
 
 const STR_CAP: usize = 32;
 const CHANNEL_CAPACITY: usize = 1024;
@@ -20,8 +18,8 @@ const TOPIC: &str = "feed.nasdaq";
 
 type BenchMessage = Message<Bytes>;
 type BenchBus = DataBus<Bytes, STR_CAP>;
-type BenchReceiver = Receiver<Arc<BenchMessage>>;
-type BenchSender = Sender<Arc<BenchMessage>>;
+type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
+type BenchSender = SendHandle<Arc<BenchMessage>>;
 
 fn topic(t: &str) -> ArrayString<STR_CAP> {
     ArrayString::from(t).unwrap()
@@ -37,28 +35,21 @@ fn message() -> BenchMessage {
     }
 }
 
-fn setup_publish_case(
-    subscriber_count: usize,
-) -> (Vec<BenchReceiver>, Arc<BenchMessage>, BenchSender) {
+fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {
     let bus = BenchBus::new(CHANNEL_CAPACITY);
-    let mut receivers = Vec::with_capacity(subscriber_count);
 
     let t = topic(TOPIC);
     bus.add_topic(t);
 
-    for _mask in 1..=subscriber_count {
-        let receiver = bus.subscribe(&t).expect("open bus");
-        receivers.push(receiver);
-    }
-
+    let receiver = bus.subscribe(&t).expect("open bus");
     let sender = bus.get_sender(&t).expect("get sender");
 
-    (receivers, Arc::new(message()), sender)
+    (receiver, Arc::new(message()), sender)
 }
 
-async fn drain(receivers: &mut [BenchReceiver]) {
-    for receiver in receivers {
-        black_box(receiver.recv().await.expect("message should be delivered"));
+async fn drain(receiver: &mut BenchReceiver, publish_count: usize) {
+    for _ in 0..publish_count {
+        black_box(receiver.receive().await.expect("message should be delivered"));
     }
 }
 
@@ -66,17 +57,19 @@ fn publish_benches(c: &mut Criterion) {
     let runtime = Runtime::new().expect("criterion tokio runtime");
     let mut group = c.benchmark_group("databus_publish");
 
-    for subscribers in [1_usize, 4, 8, 16, 32] {
-        group.throughput(Throughput::Elements(subscribers as u64));
+    for publish_count in [1_usize, 4, 8, 16, 32] {
+        group.throughput(Throughput::Elements(publish_count as u64));
         group.bench_with_input(
-            BenchmarkId::from_parameter(subscribers),
-            &subscribers,
-            |b, &subscriber_count| {
+            BenchmarkId::from_parameter(publish_count),
+            &publish_count,
+            |b, &publish_count| {
                 b.to_async(&runtime).iter_batched(
-                    || setup_publish_case(subscriber_count),
-                    |(mut receivers, msg, sender)| async move {
-                        sender.send(msg.clone()).expect("publish");
-                        drain(&mut receivers).await;
+                    setup_publish_case,
+                    |(mut receiver, msg, sender)| async move {
+                        for _ in 0..publish_count {
+                            sender.send(msg.clone()).await.expect("publish");
+                        }
+                        drain(&mut receiver, publish_count).await;
                     },
                     BatchSize::SmallInput,
                 );

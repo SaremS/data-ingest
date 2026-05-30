@@ -4,10 +4,11 @@ use std::sync::Arc;
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State};
+use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State,
+    send_receive_handles::SendHandle
+};
 
 pub enum Schedule {
     Once,
@@ -48,9 +49,8 @@ pub struct ScheduledProducer<
 > {
     producer: V,
     producer_state: U,
-    bus: Arc<DataBus<T, STR_CAP>>,
     topic: ArrayString<STR_CAP>,
-    sender: Option<Sender<Arc<Message<T>>>>,
+    sender: Option<SendHandle<Arc<Message<T>>>>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
@@ -81,7 +81,6 @@ impl<
         Ok(Self {
             producer,
             producer_state,
-            bus,
             topic,
             sender,
 
@@ -112,7 +111,7 @@ impl<
                     let (message, new_state) = self.producer.produce(self.topic.clone(), old_state).await;
 
                     if let Some(sender) = &self.sender {
-                        if sender.send(message).is_err() {
+                        if sender.send(message).await.is_err() {
                             return false;
                         }
                     } else {
@@ -152,7 +151,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
-    use trie::hierarchical_index::HierarchicalIndex;
 
     struct TestProducer;
 
@@ -228,7 +226,7 @@ mod tests {
 
         scheduled_producer.run().await;
 
-        let received = rx.recv().await.expect("Failed to receive message");
+        let received = rx.receive().await.expect("Failed to receive message");
         assert_eq!(received.payload, "test data 1");
         assert_eq!(state_checker.get_state().await, 1);
     }
@@ -251,13 +249,13 @@ mod tests {
             scheduled_producer.run().await;
         });
 
-        let msg1 = rx.recv().await.expect("Failed to receive message 1");
+        let msg1 = rx.receive().await.expect("Failed to receive message 1");
         assert_eq!(msg1.payload, "test data 1");
 
-        let msg2 = rx.recv().await.expect("Failed to receive message 2");
+        let msg2 = rx.receive().await.expect("Failed to receive message 2");
         assert_eq!(msg2.payload, "test data 2");
 
-        let msg3 = rx.recv().await.expect("Failed to receive message 3");
+        let msg3 = rx.receive().await.expect("Failed to receive message 3");
         assert_eq!(msg3.payload, "test data 3");
 
         cancellation_token.cancel();

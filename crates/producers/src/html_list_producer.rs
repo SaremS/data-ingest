@@ -1,26 +1,26 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
+use arrayvec::ArrayString;
 use async_trait::async_trait;
 use bytes::Bytes;
 use scraper::{Html, Selector};
 use thiserror::Error;
 use url::Url;
 
-use trie::hierarchical_index::HierarchicalTopic;
-
 use databus::{
     message::{Message, MessageBuilder},
     producer::Producer,
 };
 
-pub struct HtmlListProducer<const VEC_CAP: usize, const VEC_STR: usize> {
+pub struct HtmlListProducer<const STR_CAP: usize> {
     target_url: Url,
     tree_path_selector: Selector,
     sub_path_selector: Selector,
     ingest_from_back: bool,
 
-    _marker: PhantomData<([u8; VEC_CAP], [u8; VEC_STR])>,
+    _marker: PhantomData<[u8; STR_CAP]>,
 }
 
 #[derive(Clone)]
@@ -40,7 +40,7 @@ pub enum HtmlListProducerError {
     ExtractError(Cow<'static, str>),
 }
 
-impl<const VEC_CAP: usize, const VEC_STR: usize> HtmlListProducer<VEC_CAP, VEC_STR> {
+impl<const STR_CAP: usize> HtmlListProducer<STR_CAP> {
     pub fn new(
         target_url: &str,
         tree_path: &str,
@@ -131,15 +131,14 @@ impl<const VEC_CAP: usize, const VEC_STR: usize> HtmlListProducer<VEC_CAP, VEC_S
 }
 
 #[async_trait]
-impl<const VEC_CAP: usize, const STR_CAP: usize>
-    Producer<Bytes, HtmlListProducerState, VEC_CAP, STR_CAP>
-    for HtmlListProducer<VEC_CAP, STR_CAP>
+impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
+    for HtmlListProducer<STR_CAP>
 {
     async fn produce(
         &self,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        topic: ArrayString<STR_CAP>,
         old_state: HtmlListProducerState,
-    ) -> (Message<Bytes, VEC_CAP, STR_CAP>, HtmlListProducerState) {
+    ) -> (Arc<Message<Bytes>>, HtmlListProducerState) {
         let links = self
             .extract_from_url(&self.target_url)
             .await
@@ -149,11 +148,7 @@ impl<const VEC_CAP: usize, const STR_CAP: usize>
             Ok(l) => l,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
-                        Bytes::new(),
-                        topic,
-                    )
-                    .build(),
+                    MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
                     HtmlListProducerState {
                         last_extracted_url: old_state.last_extracted_url,
                     },
