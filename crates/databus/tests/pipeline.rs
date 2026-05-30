@@ -79,7 +79,7 @@ impl Producer<String, i32, STR_CAP> for SequenceProducer {
             Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("item-{next}"),
             }),
@@ -103,7 +103,7 @@ impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
             Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("{}-processed-{next}", message.payload),
             }),

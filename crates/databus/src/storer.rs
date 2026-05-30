@@ -182,7 +182,7 @@ mod tests {
         Arc::new(Message {
             header: MessageHeader {
                 message_type: MessageType::Data,
-                message_meta: HashMap::new(),
+                message_meta: None,
             },
             payload: payload.to_string(),
         })

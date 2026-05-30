@@ -29,7 +29,7 @@ fn message() -> BenchMessage {
     Message {
         header: MessageHeader {
             message_type: MessageType::Data,
-            message_meta: HashMap::new(),
+            message_meta: None,
         },
         payload: Bytes::from_static(b"benchmark-payload"),
     }

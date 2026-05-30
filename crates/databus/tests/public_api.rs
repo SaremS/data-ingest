@@ -76,7 +76,7 @@ impl Producer<String, i32, STR_CAP> for TestProducer {
             Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("value-{}", old_state + 1),
             }),
@@ -99,7 +99,7 @@ impl Processor<String, i32, STR_CAP> for TestProcessor {
             Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("{}-processed", message.payload),
             }),
@@ -137,7 +137,7 @@ async fn root_exports_support_external_publish_and_subscribe() {
     tx.send(Arc::new(Message {
         header: MessageHeader {
             message_type: MessageType::Error,
-            message_meta: HashMap::new(),
+            message_meta: None,
         },
         payload: "from integration test".to_string(),
     }))

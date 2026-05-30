@@ -237,7 +237,7 @@ mod tests {
         Message {
             header: MessageHeader {
                 message_type: MessageType::Data,
-                message_meta: HashMap::new(),
+                message_meta: None,
             },
             payload: "hello bus".to_string(),
         }
