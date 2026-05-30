@@ -49,7 +49,12 @@ fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {
 
 async fn drain(receiver: &mut BenchReceiver, publish_count: usize) {
     for _ in 0..publish_count {
-        black_box(receiver.receive().await.expect("message should be delivered"));
+        black_box(
+            receiver
+                .receive()
+                .await
+                .expect("message should be delivered"),
+        );
     }
 }
 

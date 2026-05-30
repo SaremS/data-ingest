@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    Mutex    
 };
 
 use arrayvec::ArrayString;
@@ -21,7 +20,7 @@ pub struct DataBus<T: Clone + Send + Sync, const STR_CAP: usize> {
 #[derive(Error, Debug)]
 pub enum SubscribeError {
     #[error("All available receivers are leased")]
-    OutOfReceivers 
+    OutOfReceivers,
 }
 
 impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
@@ -52,7 +51,7 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
 
         let mut sender_guard = self.senders.lock().unwrap();
         sender_guard.insert(topic_index, sender);
-        
+
         let mut receiver_guard = self.receivers.lock().unwrap();
         receiver_guard.insert(topic_index, Some(receiver));
     }
@@ -63,12 +62,11 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
         }
 
         let mut receiver_guard = self.receivers.lock().unwrap();
-        
+
         receiver_guard
             .get_mut(topic)
             .and_then(|receiver| std::mem::take(receiver))
     }
-
 
     pub fn get_sender(&self, topic: &str) -> Option<SendHandle<Arc<Message<T>>>> {
         if self.is_closed.load(Ordering::Acquire) {
@@ -77,11 +75,8 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
 
         let sender_guard = self.senders.lock().unwrap();
 
-        sender_guard
-            .get(topic)
-            .cloned() 
+        sender_guard.get(topic).cloned()
     }
-
 }
 
 #[cfg(test)]
@@ -113,9 +108,7 @@ mod tests {
 
         let tx = bus.get_sender(&topic).unwrap();
 
-        tx.send(test_message("Hello, DataBus!"))
-            .await
-            .unwrap();
+        tx.send(test_message("Hello, DataBus!")).await.unwrap();
 
         let received = rx.receive().await.expect("Failed to receive message");
         assert_eq!(received.payload, "Hello, DataBus!");
@@ -139,16 +132,14 @@ mod tests {
                 assert_eq!(request.payload, "Request to listener".to_string());
 
                 let tx = bus.get_sender(&response_topic).unwrap();
-                tx.send(test_message("Response from listener")).await.unwrap();
-
+                tx.send(test_message("Response from listener"))
+                    .await
+                    .unwrap();
             }
         });
 
         let tx = bus_clone.get_sender(&request_topic).unwrap();
-        tx.send(test_message("Request to listener"))
-            .await
-            .unwrap();
-
+        tx.send(test_message("Request to listener")).await.unwrap();
 
         let received = response_rx
             .receive()
@@ -167,9 +158,7 @@ mod tests {
         let mut rx1 = bus.subscribe(&topic).unwrap();
 
         let tx = bus.get_sender(&topic).unwrap();
-        tx.send(test_message("test"))
-            .await
-            .unwrap();
+        tx.send(test_message("test")).await.unwrap();
 
         assert_eq!(rx1.receive().await.unwrap().payload, "test");
     }

@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{databus::DataBus, message::Message, runnable::Runnable, state::State,
-    send_receive_handles::SendHandle
+use crate::{
+    databus::DataBus, message::Message, runnable::Runnable, send_receive_handles::SendHandle,
+    state::State,
 };
 
 pub enum Schedule {

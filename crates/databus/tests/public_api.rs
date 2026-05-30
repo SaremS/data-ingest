@@ -134,15 +134,13 @@ async fn root_exports_support_external_publish_and_subscribe() {
     let mut rx = bus.subscribe(&topic("publictopic")).unwrap();
     let tx = bus.get_sender(&t).unwrap();
 
-    tx.send(
-        Arc::new(Message {
-            header: MessageHeader {
-                message_type: MessageType::Error,
-                message_meta: HashMap::new(),
-            },
-            payload: "from integration test".to_string(),
-        }),
-    )
+    tx.send(Arc::new(Message {
+        header: MessageHeader {
+            message_type: MessageType::Error,
+            message_meta: HashMap::new(),
+        },
+        payload: "from integration test".to_string(),
+    }))
     .await
     .unwrap();
 

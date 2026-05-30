@@ -9,12 +9,10 @@ pub enum SendError {
     SendError(Cow<'static, str>),
 }
 
-
 #[derive(Debug, Clone)]
 pub struct SendHandle<T: Clone + Send + Sync> {
     sender: Sender<T>,
 }
-
 
 pub struct ReceiveHandle<T: Clone + Send + Sync> {
     receiver: Receiver<T>,
@@ -43,7 +41,9 @@ impl<T: Clone + Send + Sync> ReceiveHandle<T> {
     }
 }
 
-pub fn create_send_receive_handles<T: Clone + Send + Sync>(buffer_size: usize) -> (SendHandle<T>, ReceiveHandle<T>) {
+pub fn create_send_receive_handles<T: Clone + Send + Sync>(
+    buffer_size: usize,
+) -> (SendHandle<T>, ReceiveHandle<T>) {
     let (sender, receiver) = tokio::sync::mpsc::channel(buffer_size);
     (SendHandle::new(sender), ReceiveHandle::new(receiver))
 }
