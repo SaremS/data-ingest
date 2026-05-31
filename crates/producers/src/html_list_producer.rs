@@ -110,7 +110,7 @@ impl<const STR_CAP: usize> HtmlListProducer<STR_CAP> {
 
     fn get_filename_from_url(&self, url: &Url) -> Result<String, HtmlListProducerError> {
         url.path_segments()
-            .and_then(|segments| segments.last())
+            .and_then(|mut segments| segments.next_back())
             .map(|s| s.to_string())
             .ok_or_else(|| {
                 HtmlListProducerError::ExtractError(
@@ -136,7 +136,7 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
 {
     async fn produce(
         &self,
-        topic: ArrayString<STR_CAP>,
+        _topic: ArrayString<STR_CAP>,
         old_state: HtmlListProducerState,
     ) -> (Arc<Message<Bytes>>, HtmlListProducerState) {
         let links = self
