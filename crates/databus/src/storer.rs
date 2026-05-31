@@ -218,7 +218,7 @@ mod tests {
         bus.add_topic(input_topic);
 
         let mut bus_storer =
-            BusStorer::new(MockStorer, state, bus.clone(), input_topic.clone()).unwrap();
+            BusStorer::new(MockStorer, state, bus.clone(), input_topic).unwrap();
 
         let worker = async {
             bus_storer.run().await;
@@ -247,7 +247,7 @@ mod tests {
         let state = MockState::new(Vec::new());
         let topic = topic("test.input.topic");
 
-        bus.add_topic(topic.clone());
+        bus.add_topic(topic);
 
         let mut bus_storer = BusStorer::new(MockStorer, state, bus.clone(), topic).unwrap();
 
@@ -260,7 +260,7 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
         let topic = topic("test.input.topic");
-        bus.add_topic(topic.clone());
+        bus.add_topic(topic);
         let mut bus_storer = BusStorer::new(MockStorer, state, bus, topic).unwrap();
 
         bus_storer.stop().await;

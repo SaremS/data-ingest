@@ -123,9 +123,9 @@ mod tests {
         let topic = "test_topic";
         bus.add_topic(ArrayString::from(topic).unwrap());
 
-        let mut rx = bus.subscribe(&topic).unwrap();
+        let mut rx = bus.subscribe(topic).unwrap();
 
-        let tx = bus.get_sender(&topic).unwrap();
+        let tx = bus.get_sender(topic).unwrap();
 
         tx.send(test_message("Hello, DataBus!")).await.unwrap();
 
@@ -142,22 +142,22 @@ mod tests {
         bus.add_topic(ArrayString::from(request_topic).unwrap());
         bus.add_topic(ArrayString::from(response_topic).unwrap());
 
-        let mut request_rx = bus.subscribe(&request_topic).unwrap();
-        let mut response_rx = bus.subscribe(&response_topic).unwrap();
+        let mut request_rx = bus.subscribe(request_topic).unwrap();
+        let mut response_rx = bus.subscribe(response_topic).unwrap();
 
         let bus_clone = bus.clone();
         tokio::spawn(async move {
             while let Some(request) = request_rx.receive().await {
                 assert_eq!(request.payload, "Request to listener".to_string());
 
-                let tx = bus.get_sender(&response_topic).unwrap();
+                let tx = bus.get_sender(response_topic).unwrap();
                 tx.send(test_message("Response from listener"))
                     .await
                     .unwrap();
             }
         });
 
-        let tx = bus_clone.get_sender(&request_topic).unwrap();
+        let tx = bus_clone.get_sender(request_topic).unwrap();
         tx.send(test_message("Request to listener")).await.unwrap();
 
         let received = response_rx
@@ -174,9 +174,9 @@ mod tests {
         let topic = "test";
         bus.add_topic(ArrayString::from(topic).unwrap());
 
-        let mut rx1 = bus.subscribe(&topic).unwrap();
+        let mut rx1 = bus.subscribe(topic).unwrap();
 
-        let tx = bus.get_sender(&topic).unwrap();
+        let tx = bus.get_sender(topic).unwrap();
         tx.send(test_message("test")).await.unwrap();
 
         assert_eq!(rx1.receive().await.unwrap().payload, "test");
@@ -191,12 +191,12 @@ mod tests {
         bus.add_topic(ArrayString::from(shutdown_topic).unwrap());
         bus.add_topic(ArrayString::from(another_topic).unwrap());
 
-        let mut rx = bus.subscribe(&shutdown_topic).unwrap();
+        let mut rx = bus.subscribe(shutdown_topic).unwrap();
 
         bus.shutdown();
 
-        assert!(bus.subscribe(&another_topic).is_err());
-        assert!(bus.get_sender(&another_topic).is_err());
+        assert!(bus.subscribe(another_topic).is_err());
+        assert!(bus.get_sender(another_topic).is_err());
 
         assert!(rx.receive().await.is_none());
     }
