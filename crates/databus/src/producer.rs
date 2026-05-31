@@ -51,7 +51,7 @@ pub struct ScheduledProducer<
     producer: V,
     producer_state: U,
     topic: ArrayString<STR_CAP>,
-    sender: Option<SendHandle<Arc<Message<T>>>>,
+    sender: SendHandle<Arc<Message<T>>>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
@@ -78,12 +78,18 @@ impl<
         }
 
         let sender = bus.get_sender(&topic);
+        if sender.is_err() {
+            return Err(ProducerError::CreationError(format!(
+                "Failed to get sender for topic: {}",
+                topic
+            )));
+        }
 
         Ok(Self {
             producer,
             producer_state,
             topic,
-            sender,
+            sender: sender.unwrap(),
 
             schedule,
             cancellation_token: CancellationToken::new(),
@@ -109,13 +115,9 @@ impl<
                 }
                 should_continue = async {
                     let old_state = self.producer_state.get_state().await;
-                    let (message, new_state) = self.producer.produce(self.topic.clone(), old_state).await;
+                    let (message, new_state) = self.producer.produce(self.topic, old_state).await;
 
-                    if let Some(sender) = &self.sender {
-                        if sender.send(message).await.is_err() {
-                            return false;
-                        }
-                    } else {
+                    if self.sender.send(message).await.is_err() {
                         return false;
                     }
 
@@ -148,7 +150,6 @@ mod tests {
         message::{MessageHeader, MessageType},
         runnable::Runnable,
     };
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
@@ -278,14 +279,12 @@ mod tests {
     async fn test_scheduled_producer_stops_when_bus_is_closed() {
         let bus = Arc::new(DataBus::<String, 20>::new(10));
         let state = TestState::new(0);
-        let mut scheduled_producer = ScheduledProducer::new(
-            TestProducer,
-            state,
-            bus.clone(),
-            topic("testtopic"),
-            Schedule::Once,
-        )
-        .unwrap();
+        let test_topic = topic("testtopic");
+        bus.add_topic(test_topic);
+
+        let mut scheduled_producer =
+            ScheduledProducer::new(TestProducer, state, bus.clone(), test_topic, Schedule::Once)
+                .unwrap();
 
         bus.shutdown();
 
@@ -296,14 +295,11 @@ mod tests {
     async fn test_scheduled_producer_stop_cancels_run_loop() {
         let bus = Arc::new(DataBus::<String, 20>::new(10));
         let state = TestState::new(0);
-        let mut scheduled_producer = ScheduledProducer::new(
-            TestProducer,
-            state,
-            bus,
-            topic("testtopic"),
-            Schedule::Interval(10),
-        )
-        .unwrap();
+        let t = topic("testtopic");
+        bus.add_topic(t);
+
+        let mut scheduled_producer =
+            ScheduledProducer::new(TestProducer, state, bus, t, Schedule::Interval(10)).unwrap();
 
         scheduled_producer.stop().await;
         scheduled_producer.run().await;

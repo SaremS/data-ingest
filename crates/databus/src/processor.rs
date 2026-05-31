@@ -39,8 +39,8 @@ pub struct BusProcessor<
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
-    sender: Option<SendHandle<Arc<Message<T>>>>,
-    receiver: Option<ReceiveHandle<Arc<Message<T>>>>,
+    sender: SendHandle<Arc<Message<T>>>,
+    receiver: ReceiveHandle<Arc<Message<T>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -89,14 +89,28 @@ impl<
             ));
         }
 
+        let sender = bus.get_sender(&output_topic);
+        if sender.is_err() {
+            return Err(BusProcessorError::CreationError(
+                format!("Output topic '{}' does not exist in DataBus", output_topic).into(),
+            ));
+        }
+
+        let receiver = bus.subscribe(&input_topic);
+        if receiver.is_err() {
+            return Err(BusProcessorError::CreationError(
+                format!("Input topic '{}' does not exist in DataBus", input_topic).into(),
+            ));
+        }
+
         Ok(Self {
             processor,
             processor_state,
             bus,
             input_topic,
             output_topic,
-            sender: None,
-            receiver: None,
+            sender: sender.unwrap(),
+            receiver: receiver.unwrap(),
 
             cancellation_token: CancellationToken::new(),
             _marker: PhantomData,
@@ -114,46 +128,25 @@ impl<
 > Runnable for BusProcessor<T, S, U, STR_CAP, V>
 {
     async fn run(&mut self) {
-        if self.sender.is_none() {
-            if let Some(tx) = self.bus.get_sender(&self.output_topic) {
-                self.sender = Some(tx);
-            } else {
-                return;
-            }
-        }
-
-        if self.receiver.is_none() {
-            if let Some(rx) = self.bus.subscribe(&self.input_topic) {
-                self.receiver = Some(rx);
-            } else {
-                return;
-            }
-        }
-
-        let receiver = self.receiver.as_mut().unwrap();
-
         loop {
             tokio::select! {
                 _ = self.cancellation_token.cancelled() => {
                     break;
                 }
 
-                option_msg = receiver.receive() => {
+                option_msg = self.receiver.receive() => {
                     match option_msg {
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
                             let (new_message, new_state) =
-                                self.processor.process(self.input_topic.clone(), message, old_state).await;
+                                self.processor.process(self.input_topic, message, old_state).await;
 
                             self.processor_state.set_state(new_state).await;
 
-                            if let Some(sender) = &self.sender {
-                                if sender.send(new_message).await.is_err() {
-                                    break;
-                                }
-                            } else {
+                            if self.sender.send(new_message).await.is_err() {
                                 break;
                             }
+
 
                         }
                         None => {
@@ -174,7 +167,6 @@ impl<
 mod tests {
     use super::*;
     use crate::message::{MessageHeader, MessageType};
-    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
@@ -260,7 +252,6 @@ mod tests {
         let bus_processor =
             BusProcessor::new(processor, state, bus, input_topic, output_topic).unwrap();
 
-        assert!(bus_processor.receiver.is_none());
         assert_eq!(bus_processor.input_topic, topic("test.input"));
         assert_eq!(bus_processor.output_topic, topic("test.output"));
     }
@@ -269,6 +260,8 @@ mod tests {
     fn test_bus_processor_rejects_empty_input_topic() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
+        bus.add_topic(topic("input.topic"));
+        bus.add_topic(topic("output.topic"));
 
         let err = BusProcessorError::CreationError("Input topic cannot be empty".into());
         assert!(matches!(err, BusProcessorError::CreationError(_)));
@@ -353,19 +346,18 @@ mod tests {
     async fn test_bus_processor_returns_when_bus_is_closed_before_run() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
-        let mut bus_processor = BusProcessor::new(
-            MockProcessor,
-            state,
-            bus.clone(),
-            ArrayString::from("input.topic").unwrap(),
-            ArrayString::from("output.topic").unwrap(),
-        )
-        .unwrap();
+        let input_topic = topic("input.topic");
+        let output_topic = topic("output.topic");
+
+        bus.add_topic(input_topic);
+        bus.add_topic(output_topic);
+
+        let mut bus_processor =
+            BusProcessor::new(MockProcessor, state, bus.clone(), input_topic, output_topic)
+                .unwrap();
 
         bus.shutdown();
         bus_processor.run().await;
-
-        assert!(bus_processor.receiver.is_none());
     }
 
     #[tokio::test]
@@ -385,8 +377,6 @@ mod tests {
 
         bus_processor.stop().await;
         bus_processor.run().await;
-
-        assert!(bus_processor.receiver.is_some());
     }
 
     #[tokio::test]
@@ -424,14 +414,16 @@ mod tests {
     async fn test_bus_processor_stops_when_input_channel_closes() {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(0);
-        let mut bus_processor = BusProcessor::new(
-            MockProcessor,
-            state,
-            bus.clone(),
-            ArrayString::from("input.topic").unwrap(),
-            ArrayString::from("output.topic").unwrap(),
-        )
-        .unwrap();
+
+        let input_topic = ArrayString::from("input.topic").unwrap();
+        let output_topic = ArrayString::from("output.topic").unwrap();
+
+        bus.add_topic(input_topic);
+        bus.add_topic(output_topic);
+
+        let mut bus_processor =
+            BusProcessor::new(MockProcessor, state, bus.clone(), input_topic, output_topic)
+                .unwrap();
 
         let worker = async {
             bus_processor.run().await;

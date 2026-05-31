@@ -40,7 +40,7 @@ pub struct BusStorer<
     processor_state: U,
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
-    receiver: Option<ReceiveHandle<Arc<Message<T>>>>,
+    receiver: ReceiveHandle<Arc<Message<T>>>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -66,12 +66,19 @@ impl<
             ));
         }
 
+        let receiver = bus.subscribe(&input_topic);
+        if receiver.is_err() {
+            return Err(BusStorerError::SubscriptionError(
+                format!("Failed to subscribe to topic: {}", input_topic).into(),
+            ));
+        }
+
         Ok(Self {
             processor,
             processor_state,
             bus,
             input_topic,
-            receiver: None,
+            receiver: receiver.unwrap(),
 
             cancellation_token: CancellationToken::new(),
             _marker: PhantomData,
@@ -89,23 +96,13 @@ impl<
 > Runnable for BusStorer<T, S, U, STR_CAP, V>
 {
     async fn run(&mut self) {
-        if self.receiver.is_none() {
-            if let Some(rx) = self.bus.subscribe(&self.input_topic) {
-                self.receiver = Some(rx);
-            } else {
-                return;
-            }
-        }
-
-        let receiver = self.receiver.as_mut().unwrap();
-
         loop {
             tokio::select! {
                 _ = self.cancellation_token.cancelled() => {
                     break;
                 }
 
-                result_msg = receiver.receive() => {
+                result_msg = self.receiver.receive() => {
                     match result_msg {
                         Some(message) => {
                             let old_state = self.processor_state.get_state().await;
@@ -131,7 +128,6 @@ impl<
 mod tests {
     use super::*;
     use crate::message::{MessageHeader, MessageType};
-    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
@@ -193,10 +189,10 @@ mod tests {
         let bus = Arc::new(DataBus::new(10));
         let state = MockState::new(Vec::new());
         let i = topic("test.input.topic");
+        bus.add_topic(i);
 
         let bus_storer = BusStorer::new(MockStorer, state, bus, i).unwrap();
 
-        assert!(bus_storer.receiver.is_none());
         assert_eq!(bus_storer.input_topic, i);
     }
 
@@ -257,8 +253,6 @@ mod tests {
 
         bus.shutdown();
         bus_storer.run().await;
-
-        assert!(bus_storer.receiver.is_none());
     }
 
     #[tokio::test]
@@ -271,7 +265,5 @@ mod tests {
 
         bus_storer.stop().await;
         bus_storer.run().await;
-
-        assert!(bus_storer.receiver.is_some());
     }
 }

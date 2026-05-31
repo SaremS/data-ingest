@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{
     Arc, Mutex,
@@ -21,6 +22,18 @@ pub struct DataBus<T: Clone + Send + Sync, const STR_CAP: usize> {
 pub enum SubscribeError {
     #[error("All available receivers are leased")]
     OutOfReceivers,
+    #[error("DataBus is closed")]
+    BusClosed,
+    #[error("Topic not found: {0}")]
+    TopicNotFound(Cow<'static, str>),
+}
+
+#[derive(Error, Debug)]
+pub enum GetSenderError {
+    #[error("DataBus is closed")]
+    BusClosed,
+    #[error("Topic not found: {0}")]
+    TopicNotFound(Cow<'static, str>),
 }
 
 impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
@@ -56,33 +69,39 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
         receiver_guard.insert(topic_index, Some(receiver));
     }
 
-    pub fn subscribe(&self, topic: &str) -> Option<ReceiveHandle<Arc<Message<T>>>> {
+    pub fn subscribe(&self, topic: &str) -> Result<ReceiveHandle<Arc<Message<T>>>, SubscribeError> {
         if self.is_closed.load(Ordering::Acquire) {
-            return None;
+            return Err(SubscribeError::BusClosed);
         }
 
         let mut receiver_guard = self.receivers.lock().unwrap();
 
-        receiver_guard
-            .get_mut(topic)
-            .and_then(|receiver| std::mem::take(receiver))
+        match receiver_guard.get_mut(topic) {
+            Some(inner_option) => match inner_option.take() {
+                Some(handle) => Ok(handle),
+                None => Err(SubscribeError::OutOfReceivers),
+            },
+            None => Err(SubscribeError::TopicNotFound(Cow::Owned(topic.to_string()))),
+        }
     }
 
-    pub fn get_sender(&self, topic: &str) -> Option<SendHandle<Arc<Message<T>>>> {
+    pub fn get_sender(&self, topic: &str) -> Result<SendHandle<Arc<Message<T>>>, GetSenderError> {
         if self.is_closed.load(Ordering::Acquire) {
-            return None;
+            return Err(GetSenderError::BusClosed);
         }
 
         let sender_guard = self.senders.lock().unwrap();
 
-        sender_guard.get(topic).cloned()
+        match sender_guard.get(topic) {
+            Some(handle) => Ok(handle.clone()),
+            None => Err(GetSenderError::TopicNotFound(Cow::Owned(topic.to_string()))),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use crate::message::{MessageHeader, MessageType};
@@ -176,8 +195,8 @@ mod tests {
 
         bus.shutdown();
 
-        assert!(bus.subscribe(&another_topic).is_none());
-        assert!(bus.get_sender(&another_topic).is_none());
+        assert!(bus.subscribe(&another_topic).is_err());
+        assert!(bus.get_sender(&another_topic).is_err());
 
         assert!(rx.receive().await.is_none());
     }
