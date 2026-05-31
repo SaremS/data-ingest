@@ -2,9 +2,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use arrayvec::ArrayString;
 use thiserror::Error;
-
-use trie::hierarchical_index::{HierarchicalTopic, HierarchicalTopicError};
 
 #[derive(Error, Debug)]
 pub enum MessageError {
@@ -22,96 +21,88 @@ pub enum MessageType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageHeader {
     pub message_type: MessageType,
-    pub message_meta: HashMap<String, String>,
+    pub message_meta: Option<HashMap<ArrayString<16>, ArrayString<24>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
-    pub topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+pub struct Message<T: Clone + Send + Sync> {
     pub header: MessageHeader,
     pub payload: T,
 }
 
-pub struct MessageBuilder<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
-    topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+pub struct MessageBuilder<T: Clone + Send + Sync> {
     message_type: MessageType,
-    message_meta: HashMap<String, String>,
+    message_meta: Option<HashMap<ArrayString<16>, ArrayString<24>>>,
     payload: T,
 }
 
-impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
-    MessageBuilder<T, VEC_CAP, STR_CAP>
-{
-    fn new(payload: T, message_type: MessageType, topic_root: &str) -> Result<Self, MessageError> {
-        let topic = HierarchicalTopic::from_str(topic_root).map_err(|e| {
-            MessageError::CreationError(
-                format!("Invalid topic root '{}': {}", topic_root, e).into(),
-            )
-        })?;
-
+impl<T: Clone + Send + Sync> MessageBuilder<T> {
+    fn new(payload: T, message_type: MessageType) -> Result<Self, MessageError> {
         Ok(Self {
-            topic,
             message_type,
-            message_meta: HashMap::new(),
+            message_meta: None,
             payload,
         })
     }
 
-    pub fn new_from_topic(
-        payload: T,
-        message_type: MessageType,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-    ) -> Self {
+    pub fn new_from_topic(payload: T, message_type: MessageType) -> Self {
         Self {
-            topic,
             message_type,
-            message_meta: HashMap::new(),
+            message_meta: None,
             payload,
         }
     }
 
-    pub fn new_from_message(message: Message<T, VEC_CAP, STR_CAP>) -> Self {
+    pub fn new_from_message(message: Message<T>) -> Self {
         Self {
-            topic: message.topic,
             message_type: message.header.message_type,
             message_meta: message.header.message_meta,
             payload: message.payload,
         }
     }
 
-    pub fn new_data(payload: T, topic_root: &str) -> Result<Self, MessageError> {
-        Self::new(payload, MessageType::Data, topic_root)
+    pub fn new_data(payload: T) -> Result<Self, MessageError> {
+        Self::new(payload, MessageType::Data)
     }
 
-    pub fn new_data_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
-        Self::new_from_topic(payload, MessageType::Data, topic)
+    pub fn new_data_from_topic(payload: T) -> Self {
+        Self::new_from_topic(payload, MessageType::Data)
     }
 
-    pub fn new_empty(payload: T, topic_root: &str) -> Result<Self, MessageError> {
-        Self::new(payload, MessageType::Empty, topic_root)
+    pub fn new_empty(payload: T) -> Result<Self, MessageError> {
+        Self::new(payload, MessageType::Empty)
     }
 
-    pub fn new_empty_from_topic(payload: T, topic: HierarchicalTopic<VEC_CAP, STR_CAP>) -> Self {
-        Self::new_from_topic(payload, MessageType::Empty, topic)
+    pub fn new_error(payload: T) -> Result<Self, MessageError> {
+        Self::new(payload, MessageType::Error)
     }
 
-    pub fn new_error(payload: T, topic_root: &str) -> Result<Self, MessageError> {
-        Self::new(payload, MessageType::Error, topic_root)
-    }
+    pub fn add_meta(mut self, key: &str, value: &str) -> Self {
+        //shorten the key and value to fit into ArrayString<32>
+        let key = if key.len() > 16 {
+            ArrayString::from(&key[..16]).unwrap()
+        } else {
+            ArrayString::from(key).unwrap()
+        };
 
-    pub fn add_meta(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.message_meta.insert(key.into(), value.into());
+        let value = if value.len() > 24 {
+            ArrayString::from(&value[..24]).unwrap()
+        } else {
+            ArrayString::from(value).unwrap()
+        };
+
+        if let Some(ref mut meta) = self.message_meta {
+            meta.insert(key, value);
+        } else {
+            let mut meta = HashMap::new();
+            meta.insert(key, value);
+            self.message_meta = Some(meta);
+        }
         self
     }
 
-    pub fn extend_topic(mut self, part: &str) -> Result<Self, HierarchicalTopicError> {
-        self.topic.add_part(part)?;
-        Ok(self)
-    }
-
-    pub fn build(self) -> Message<T, VEC_CAP, STR_CAP> {
+    pub fn build(self) -> Message<T> {
         Message {
-            topic: self.topic,
             header: MessageHeader {
                 message_type: self.message_type,
                 message_meta: self.message_meta,

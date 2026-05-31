@@ -1,15 +1,9 @@
 [package]
-name = "producers"
+name = "storer"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-arrayvec = "0.7.6"
 async-trait = "0.1.89"
 bytes = "1.11.1"
 databus = { version = "0.1.0", path = "../databus" }
-reqwest = "0.13.3"
-scraper = "0.27.0"
-thiserror = "2.0.18"
-tokio = "1.52.3"
-url = "2.5.8"

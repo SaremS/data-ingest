@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrayvec::ArrayString;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
@@ -12,10 +12,8 @@ use databus::{
     storer::{BusStorer, Storer},
 };
 use tokio::sync::Mutex;
-use tokio::time::{Duration, sleep, timeout};
-use trie::hierarchical_index::{HierarchicalIndex, HierarchicalTopic};
+use tokio::time::{Duration, sleep};
 
-const VEC_CAP: usize = 4;
 const STR_CAP: usize = 32;
 
 #[derive(Clone)]
@@ -69,22 +67,21 @@ impl State<Vec<String>> for CollectedState {
 struct SequenceProducer;
 
 #[async_trait]
-impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
+impl Producer<String, i32, STR_CAP> for SequenceProducer {
     async fn produce(
         &self,
-        topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
+        _topic: ArrayString<STR_CAP>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
         (
-            Message {
-                topic,
+            Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("item-{next}"),
-            },
+            }),
             next,
         )
     }
@@ -93,23 +90,22 @@ impl Producer<String, i32, VEC_CAP, STR_CAP> for SequenceProducer {
 struct DecoratingProcessor;
 
 #[async_trait]
-impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
+impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
-        _topic: HierarchicalTopic<VEC_CAP, STR_CAP>,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        _topic: ArrayString<STR_CAP>,
+        message: Arc<Message<String>>,
         old_state: i32,
-    ) -> (Message<String, VEC_CAP, STR_CAP>, i32) {
+    ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
         (
-            Message {
-                topic: message.topic,
+            Arc::new(Message {
                 header: MessageHeader {
                     message_type: MessageType::Data,
-                    message_meta: HashMap::new(),
+                    message_meta: None,
                 },
                 payload: format!("{}-processed-{next}", message.payload),
-            },
+            }),
             next,
         )
     }
@@ -118,28 +114,24 @@ impl Processor<String, i32, VEC_CAP, STR_CAP> for DecoratingProcessor {
 struct CollectingStorer;
 
 #[async_trait]
-impl Storer<String, Vec<String>, VEC_CAP, STR_CAP> for CollectingStorer {
+impl Storer<String, Vec<String>> for CollectingStorer {
     async fn store(
         &self,
-        message: Message<String, VEC_CAP, STR_CAP>,
+        message: Arc<Message<String>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
-        old_state.push(message.payload);
+        old_state.push((*message).clone().payload);
         old_state
     }
 }
 
-fn topic(s: &str) -> HierarchicalTopic<VEC_CAP, STR_CAP> {
-    HierarchicalTopic::from_str(s).unwrap()
-}
-
-fn index(s: &str) -> HierarchicalIndex<VEC_CAP, STR_CAP> {
-    HierarchicalIndex::from_str(s).unwrap()
+fn topic(s: &str) -> ArrayString<STR_CAP> {
+    ArrayString::from(s).unwrap()
 }
 
 #[tokio::test]
 async fn producer_processor_and_storer_work_together() {
-    let bus = Arc::new(DataBus::<String, VEC_CAP, STR_CAP>::new(8));
+    let bus = Arc::new(DataBus::<String, STR_CAP>::new(8));
     let producer_state = CounterState::new(0);
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
@@ -147,11 +139,14 @@ async fn producer_processor_and_storer_work_together() {
     let raw_topic = topic("raw.one");
     let processed_topic = topic("processed.one");
 
+    bus.add_topic(raw_topic);
+    bus.add_topic(processed_topic);
+
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
         producer_state.clone(),
         bus.clone(),
-        raw_topic.clone(),
+        raw_topic,
         Schedule::Once,
     )
     .unwrap();
@@ -160,8 +155,8 @@ async fn producer_processor_and_storer_work_together() {
         DecoratingProcessor,
         processor_state.clone(),
         bus.clone(),
-        index("raw.one"),
-        processed_topic.clone(),
+        raw_topic,
+        processed_topic,
     )
     .unwrap();
 
@@ -169,34 +164,26 @@ async fn producer_processor_and_storer_work_together() {
         CollectingStorer,
         storer_state.clone(),
         bus.clone(),
-        index("processed.*"),
+        processed_topic,
     )
     .unwrap();
 
-    let mut processed_rx = bus.subscribe(&index("processed.one")).unwrap();
-
-    let processor_worker = async {
+    let processor_worker = tokio::spawn(async move {
         processor.run().await;
-    };
-    let storer_worker = async {
+    });
+    let storer_worker = tokio::spawn(async move {
         storer.run().await;
-    };
-    let driver = async {
-        sleep(Duration::from_millis(10)).await;
-        producer.run().await;
+    });
 
-        let received = timeout(Duration::from_millis(200), processed_rx.recv())
-            .await
-            .expect("timed out waiting for processed message")
-            .expect("processed message should be received");
+    sleep(Duration::from_millis(10)).await;
+    producer.run().await;
+    drop(producer);
 
-        assert_eq!(received.payload, "item-1-processed-1");
+    sleep(Duration::from_millis(50)).await;
+    bus.shutdown();
 
-        sleep(Duration::from_millis(20)).await;
-        bus.shutdown();
-    };
-
-    tokio::join!(processor_worker, storer_worker, driver);
+    processor_worker.await.unwrap();
+    storer_worker.await.unwrap();
 
     assert_eq!(producer_state.get_state().await, 1);
     assert_eq!(processor_state.get_state().await, 1);

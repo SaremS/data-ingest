@@ -1,0 +1,88 @@
+use std::hint::black_box;
+use std::sync::Arc;
+
+use arrayvec::ArrayString;
+use bytes::Bytes;
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use databus::{
+    databus::DataBus,
+    message::{Message, MessageHeader, MessageType},
+    send_receive_handles::{ReceiveHandle, SendHandle},
+};
+use tokio::runtime::Runtime;
+
+const STR_CAP: usize = 32;
+const CHANNEL_CAPACITY: usize = 1024;
+const TOPIC: &str = "feed.nasdaq";
+
+type BenchMessage = Message<Bytes>;
+type BenchBus = DataBus<Bytes, STR_CAP>;
+type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
+type BenchSender = SendHandle<Arc<BenchMessage>>;
+
+fn topic(t: &str) -> ArrayString<STR_CAP> {
+    ArrayString::from(t).unwrap()
+}
+
+fn message() -> BenchMessage {
+    Message {
+        header: MessageHeader {
+            message_type: MessageType::Data,
+            message_meta: None,
+        },
+        payload: Bytes::from_static(b"benchmark-payload"),
+    }
+}
+
+fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {
+    let bus = BenchBus::new(CHANNEL_CAPACITY);
+
+    let t = topic(TOPIC);
+    bus.add_topic(t);
+
+    let receiver = bus.subscribe(&t).expect("open bus");
+    let sender = bus.get_sender(&t).expect("get sender");
+
+    (receiver, Arc::new(message()), sender)
+}
+
+async fn drain(receiver: &mut BenchReceiver, publish_count: usize) {
+    for _ in 0..publish_count {
+        black_box(
+            receiver
+                .receive()
+                .await
+                .expect("message should be delivered"),
+        );
+    }
+}
+
+fn publish_benches(c: &mut Criterion) {
+    let runtime = Runtime::new().expect("criterion tokio runtime");
+    let mut group = c.benchmark_group("databus_publish");
+
+    for publish_count in [1_usize, 4, 8, 16, 32] {
+        group.throughput(Throughput::Elements(publish_count as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(publish_count),
+            &publish_count,
+            |b, &publish_count| {
+                b.to_async(&runtime).iter_batched(
+                    setup_publish_case,
+                    |(mut receiver, msg, sender)| async move {
+                        for _ in 0..publish_count {
+                            sender.send(msg.clone()).await.expect("publish");
+                        }
+                        drain(&mut receiver, publish_count).await;
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
+criterion_group!(latency, publish_benches);
+criterion_main!(latency);

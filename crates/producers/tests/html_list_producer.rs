@@ -5,13 +5,13 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use arrayvec::ArrayString;
 use bytes::Bytes;
 use databus::{message::MessageType, producer::Producer};
 use producers::html_list_producer::{HtmlListProducer, HtmlListProducerState};
-use trie::hierarchical_index::HierarchicalTopic;
 
-fn topic(s: &str) -> HierarchicalTopic<3, 10> {
-    HierarchicalTopic::from_str(s).unwrap()
+fn topic(s: &str) -> ArrayString<20> {
+    ArrayString::from(s).unwrap()
 }
 
 fn listing_page(base_url: &str) -> String {
@@ -93,8 +93,8 @@ async fn produce_fetches_first_dataset_and_updates_state() {
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("first-dataset"));
     assert_eq!(
-        message.header.message_meta.get("filename"),
-        Some(&"dataset-1.csv".to_string())
+        message.header.clone().message_meta.unwrap().get("filename"),
+        Some(&ArrayString::<24>::from("dataset-1.csv").unwrap())
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -127,8 +127,8 @@ async fn produce_uses_checkpoint_to_fetch_next_dataset() {
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("second-dataset"));
     assert_eq!(
-        message.header.message_meta.get("filename"),
-        Some(&"dataset-2.csv".to_string())
+        message.header.clone().message_meta.unwrap().get("filename"),
+        Some(&ArrayString::<24>::from("dataset-2.csv").unwrap())
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -161,8 +161,8 @@ async fn produce_respects_ingest_from_back() {
     assert_eq!(message.header.message_type, MessageType::Data);
     assert_eq!(message.payload, Bytes::from("latest-dataset"));
     assert_eq!(
-        message.header.message_meta.get("filename"),
-        Some(&"dataset-2.csv".to_string())
+        message.header.clone().message_meta.unwrap().get("filename"),
+        Some(&ArrayString::<24>::from("dataset-2.csv").unwrap())
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -190,7 +190,7 @@ async fn produce_returns_empty_when_checkpoint_is_latest_link() {
 
     assert_eq!(message.header.message_type, MessageType::Empty);
     assert_eq!(message.payload, Bytes::new());
-    assert!(message.header.message_meta.is_empty());
+    assert!(message.header.message_meta.is_none());
     assert_eq!(new_state.last_extracted_url, expected_last_url);
 
     server.join().expect("join test server");

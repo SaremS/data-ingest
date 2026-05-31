@@ -1,145 +1,167 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use tokio::sync::mpsc;
-
-use trie::{
-    hierarchical_index::{HierarchicalIndex, HierarchicalTopic},
-    trie_index::TrieIndex,
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
-use crate::message::Message;
+use arrayvec::ArrayString;
+use thiserror::Error;
 
-pub struct DataBus<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize> {
-    topics: TrieIndex<mpsc::Sender<Message<T, VEC_CAP, STR_CAP>>, VEC_CAP, STR_CAP>,
+use crate::message::Message;
+use crate::send_receive_handles::{ReceiveHandle, SendHandle, create_send_receive_handles};
+
+pub struct DataBus<T: Clone + Send + Sync, const STR_CAP: usize> {
+    senders: Mutex<HashMap<ArrayString<STR_CAP>, SendHandle<Arc<Message<T>>>>>,
+    receivers: Mutex<HashMap<ArrayString<STR_CAP>, Option<ReceiveHandle<Arc<Message<T>>>>>>,
     channel_capacity: usize,
     is_closed: AtomicBool,
 }
 
-impl<T: Clone + Send + Sync, const VEC_CAP: usize, const STR_CAP: usize>
-    DataBus<T, VEC_CAP, STR_CAP>
-{
+#[derive(Error, Debug)]
+pub enum SubscribeError {
+    #[error("All available receivers are leased")]
+    OutOfReceivers,
+    #[error("DataBus is closed")]
+    BusClosed,
+    #[error("Topic not found: {0}")]
+    TopicNotFound(Cow<'static, str>),
+}
+
+#[derive(Error, Debug)]
+pub enum GetSenderError {
+    #[error("DataBus is closed")]
+    BusClosed,
+    #[error("Topic not found: {0}")]
+    TopicNotFound(Cow<'static, str>),
+}
+
+impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
     pub fn new(channel_capacity: usize) -> Self {
         DataBus {
-            topics: TrieIndex::new(),
+            senders: Mutex::new(HashMap::new()),
+            receivers: Mutex::new(HashMap::new()),
             channel_capacity,
             is_closed: AtomicBool::new(false),
         }
     }
 
     pub fn shutdown(&self) {
-        self.is_closed.store(true, Ordering::SeqCst);
-        self.topics.clear();
+        self.is_closed.store(true, Ordering::Release);
+        let mut sender_guard = self.senders.lock().unwrap();
+        *sender_guard = HashMap::new();
+
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        *receiver_guard = HashMap::new();
     }
 
-    pub fn subscribe(
-        &self,
-        topic_index: &HierarchicalIndex<VEC_CAP, STR_CAP>,
-    ) -> Option<mpsc::Receiver<Message<T, VEC_CAP, STR_CAP>>> {
-        if self.is_closed.load(Ordering::SeqCst) {
-            return None;
+    pub fn add_topic(&self, topic_index: ArrayString<STR_CAP>) {
+        if self.is_closed.load(Ordering::Acquire) {
+            return;
         }
 
-        let (tx, rx) = mpsc::channel(self.channel_capacity);
+        let (sender, receiver) = create_send_receive_handles(self.channel_capacity);
 
-        self.topics.insert_and_set_at_index(topic_index, tx);
+        let mut sender_guard = self.senders.lock().unwrap();
+        sender_guard.insert(topic_index, sender);
 
-        Some(rx)
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        receiver_guard.insert(topic_index, Some(receiver));
     }
 
-    pub async fn publish(&self, message: Message<T, VEC_CAP, STR_CAP>) -> Result<(), &'static str> {
-        if self.is_closed.load(Ordering::SeqCst) {
-            return Err("Bus is closed");
+    pub fn subscribe(&self, topic: &str) -> Result<ReceiveHandle<Arc<Message<T>>>, SubscribeError> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return Err(SubscribeError::BusClosed);
         }
 
-        let topic = message.topic.clone();
+        let mut receiver_guard = self.receivers.lock().unwrap();
 
-        let senders = {
-            let mut active_senders = Vec::new();
+        match receiver_guard.get_mut(topic) {
+            Some(inner_option) => match inner_option.take() {
+                Some(handle) => Ok(handle),
+                None => Err(SubscribeError::OutOfReceivers),
+            },
+            None => Err(SubscribeError::TopicNotFound(Cow::Owned(topic.to_string()))),
+        }
+    }
 
-            for tx in self.topics.get_at_index(&topic) {
-                if !tx.is_closed() {
-                    active_senders.push(tx.clone());
-                }
-            }
-
-            active_senders
-        };
-
-        for tx in senders {
-            let _ = tx.send(message.clone()).await;
+    pub fn get_sender(&self, topic: &str) -> Result<SendHandle<Arc<Message<T>>>, GetSenderError> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return Err(GetSenderError::BusClosed);
         }
 
-        Ok(())
+        let sender_guard = self.senders.lock().unwrap();
+
+        match sender_guard.get(topic) {
+            Some(handle) => Ok(handle.clone()),
+            None => Err(GetSenderError::TopicNotFound(Cow::Owned(topic.to_string()))),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use crate::message::{MessageHeader, MessageType};
 
-    fn topic(s: &str) -> HierarchicalTopic<3, 10> {
-        HierarchicalTopic::from_str(s).unwrap()
-    }
-
-    fn index(s: &str) -> HierarchicalIndex<3, 10> {
-        HierarchicalIndex::from_str(s).unwrap()
-    }
-
-    fn test_message(payload: impl Into<String>, t: &str) -> Message<String, 3, 10> {
-        Message {
-            topic: topic(t),
+    fn test_message(payload: impl Into<String>) -> Arc<Message<String>> {
+        Arc::new(Message {
             header: MessageHeader {
                 message_type: MessageType::Data,
-                message_meta: HashMap::new(),
+                message_meta: None,
             },
             payload: payload.into(),
-        }
+        })
     }
 
     #[tokio::test]
     async fn test_data_bus() {
-        let bus = DataBus::<String, 3, 10>::new(10);
-        let t = index("testtopic");
+        let bus = DataBus::<String, 20>::new(10);
 
-        let mut rx = bus.subscribe(&t).unwrap();
+        let topic = "test_topic";
+        bus.add_topic(ArrayString::from(topic).unwrap());
 
-        bus.publish(test_message("Hello, DataBus!", "testtopic"))
-            .await
-            .unwrap();
+        let mut rx = bus.subscribe(topic).unwrap();
 
-        let received = rx.recv().await.expect("Failed to receive message");
+        let tx = bus.get_sender(topic).unwrap();
+
+        tx.send(test_message("Hello, DataBus!")).await.unwrap();
+
+        let received = rx.receive().await.expect("Failed to receive message");
         assert_eq!(received.payload, "Hello, DataBus!");
     }
 
     #[tokio::test]
     async fn test_responding_listener() {
-        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
-        let request_index = index("request");
-        let response_index = index("response");
+        let bus = Arc::new(DataBus::<String, 20>::new(10));
+        let request_topic = "request";
+        let response_topic = "response";
 
-        let mut request_rx = bus.subscribe(&request_index).unwrap();
-        let mut response_rx = bus.subscribe(&response_index).unwrap();
+        bus.add_topic(ArrayString::from(request_topic).unwrap());
+        bus.add_topic(ArrayString::from(response_topic).unwrap());
+
+        let mut request_rx = bus.subscribe(request_topic).unwrap();
+        let mut response_rx = bus.subscribe(response_topic).unwrap();
 
         let bus_clone = bus.clone();
         tokio::spawn(async move {
-            if let Some(_req) = request_rx.recv().await {
-                bus_clone
-                    .publish(test_message("Response from listener", "response"))
+            while let Some(request) = request_rx.receive().await {
+                assert_eq!(request.payload, "Request to listener".to_string());
+
+                let tx = bus.get_sender(response_topic).unwrap();
+                tx.send(test_message("Response from listener"))
                     .await
                     .unwrap();
             }
         });
 
-        bus.publish(test_message("Request to listener", "request"))
-            .await
-            .unwrap();
+        let tx = bus_clone.get_sender(request_topic).unwrap();
+        tx.send(test_message("Request to listener")).await.unwrap();
 
         let received = response_rx
-            .recv()
+            .receive()
             .await
             .expect("Failed to receive response");
         assert_eq!(received.payload, "Response from listener".to_string());
@@ -147,33 +169,35 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_listeners() {
-        let bus = Arc::new(DataBus::<String, 3, 10>::new(10));
-        let mut rx1 = bus.subscribe(&index("global.one")).unwrap();
-        let mut rx2 = bus.subscribe(&index("global.*")).unwrap();
-        let mut rx3 = bus.subscribe(&index("*.*")).unwrap();
+        let bus = Arc::new(DataBus::<String, 20>::new(10));
 
-        bus.publish(test_message("test", "global.one"))
-            .await
-            .unwrap();
+        let topic = "test";
+        bus.add_topic(ArrayString::from(topic).unwrap());
 
-        assert_eq!(rx1.recv().await.unwrap().payload, "test");
-        assert_eq!(rx2.recv().await.unwrap().payload, "test");
-        assert_eq!(rx3.recv().await.unwrap().payload, "test");
+        let mut rx1 = bus.subscribe(topic).unwrap();
+
+        let tx = bus.get_sender(topic).unwrap();
+        tx.send(test_message("test")).await.unwrap();
+
+        assert_eq!(rx1.receive().await.unwrap().payload, "test");
     }
 
     #[tokio::test]
     async fn test_graceful_shutdown() {
-        let bus = DataBus::<String, 3, 10>::new(10);
-        let shutdown_topic = index("shutdown");
-        let another_topic = index("another");
-        let mut rx = bus.subscribe(&shutdown_topic).unwrap();
+        let bus = DataBus::<String, 20>::new(10);
+
+        let shutdown_topic = "shutdown";
+        let another_topic = "another";
+        bus.add_topic(ArrayString::from(shutdown_topic).unwrap());
+        bus.add_topic(ArrayString::from(another_topic).unwrap());
+
+        let mut rx = bus.subscribe(shutdown_topic).unwrap();
 
         bus.shutdown();
 
-        assert!(bus.subscribe(&another_topic).is_none());
+        assert!(bus.subscribe(another_topic).is_err());
+        assert!(bus.get_sender(another_topic).is_err());
 
-        assert!(bus.publish(test_message("fail", "shutdown")).await.is_err());
-
-        assert!(rx.recv().await.is_none());
+        assert!(rx.receive().await.is_none());
     }
 }
