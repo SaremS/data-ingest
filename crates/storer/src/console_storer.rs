@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use std::sync::Arc;
 
 use databus::{message::Message, storer::Storer};
 
@@ -10,12 +11,10 @@ pub struct ConsoleStorer {}
 pub struct ConsoleStorerState {}
 
 #[async_trait]
-impl<const VEC_CAP: usize, const STR_CAP: usize> Storer<Bytes, ConsoleStorerState, VEC_CAP, STR_CAP>
-    for ConsoleStorer
-{
+impl Storer<Bytes, ConsoleStorerState> for ConsoleStorer {
     async fn store(
         &self,
-        message: Message<Bytes, VEC_CAP, STR_CAP>,
+        message: Arc<Message<Bytes>>,
         old_state: ConsoleStorerState,
     ) -> ConsoleStorerState {
         println!("{:?}", message.payload);

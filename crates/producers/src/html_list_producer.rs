@@ -148,7 +148,11 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
             Ok(l) => l,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes>::new_empty(Bytes::new()).build(),
+                    Arc::new(
+                        MessageBuilder::<Bytes>::new_empty(Bytes::new())
+                            .unwrap()
+                            .build(),
+                    ),
                     HtmlListProducerState {
                         last_extracted_url: old_state.last_extracted_url,
                     },
@@ -158,11 +162,11 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
 
         if links.is_empty() {
             return (
-                MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
-                    Bytes::new(),
-                    topic,
-                )
-                .build(),
+                Arc::new(
+                    MessageBuilder::<Bytes>::new_empty(Bytes::new())
+                        .unwrap()
+                        .build(),
+                ),
                 HtmlListProducerState {
                     last_extracted_url: old_state.last_extracted_url,
                 },
@@ -188,11 +192,11 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
                 Some(l) => l.clone(),
                 None => {
                     return (
-                        MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
-                            Bytes::new(),
-                            topic,
-                        )
-                        .build(),
+                        Arc::new(
+                            MessageBuilder::<Bytes>::new_empty(Bytes::new())
+                                .unwrap()
+                                .build(),
+                        ),
                         HtmlListProducerState {
                             last_extracted_url: old_state.last_extracted_url,
                         },
@@ -205,11 +209,11 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
             Ok(url) => url,
             Err(_) => {
                 return (
-                    MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
-                        Bytes::new(),
-                        topic,
-                    )
-                    .build(),
+                    Arc::new(
+                        MessageBuilder::<Bytes>::new_empty(Bytes::new())
+                            .unwrap()
+                            .build(),
+                    ),
                     HtmlListProducerState {
                         last_extracted_url: old_state.last_extracted_url,
                     },
@@ -222,11 +226,11 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
                 Ok(result) => result,
                 Err(_) => {
                     return (
-                        MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_empty_from_topic(
-                            Bytes::new(),
-                            topic,
-                        )
-                        .build(),
+                        Arc::new(
+                            MessageBuilder::<Bytes>::new_empty(Bytes::new())
+                                .unwrap()
+                                .build(),
+                        ),
                         HtmlListProducerState {
                             last_extracted_url: old_state.last_extracted_url,
                         },
@@ -235,9 +239,12 @@ impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
             };
 
         (
-            MessageBuilder::<Bytes, VEC_CAP, STR_CAP>::new_data_from_topic(content, topic)
-                .add_meta("filename".to_string(), dataset_name)
-                .build(),
+            Arc::new(
+                MessageBuilder::<Bytes>::new_data(content)
+                    .unwrap()
+                    .add_meta("filename", &dataset_name)
+                    .build(),
+            ),
             HtmlListProducerState {
                 last_extracted_url: Some(latest_link),
             },
@@ -252,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_extract_returns_matching_links_only() {
-        let producer = HtmlListProducer::<3, 10>::new(
+        let producer = HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -283,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_extract_skips_elements_without_href() {
-        let producer = HtmlListProducer::<3, 10>::new(
+        let producer = HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -309,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_target_url() {
-        let error = match HtmlListProducer::<3, 10>::new(
+        let error = match HtmlListProducer::<20>::new(
             "not-a-url",
             "ul.list-class",
             "a.link-class",
@@ -325,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_tree_path_selector() {
-        let error = match HtmlListProducer::<3, 10>::new(
+        let error = match HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class[",
             "a.link-class",
@@ -345,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_new_rejects_invalid_sub_path_selector() {
-        let error = match HtmlListProducer::<3, 10>::new(
+        let error = match HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class[",
@@ -365,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_get_filename_from_url_returns_last_path_segment() {
-        let producer = HtmlListProducer::<3, 10>::new(
+        let producer = HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
@@ -381,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_get_filename_from_url_rejects_urls_without_path_segments() {
-        let producer = HtmlListProducer::<3, 10>::new(
+        let producer = HtmlListProducer::<20>::new(
             "https://example.com",
             "ul.list-class",
             "a.link-class",
