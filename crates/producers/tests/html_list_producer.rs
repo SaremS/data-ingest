@@ -3,6 +3,7 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     thread::{self, JoinHandle},
+    sync::Arc,
 };
 
 use arrayvec::ArrayString;
@@ -90,11 +91,11 @@ async fn produce_fetches_first_dataset_and_updates_state() {
 
     let (message, new_state) = producer.produce(topic("html.list"), initial_state).await;
 
-    assert_eq!(message.header.message_type, MessageType::Data);
-    assert_eq!(message.payload, Bytes::from("first-dataset"));
+    assert_eq!(*message.message_type(), MessageType::Data);
+    assert_eq!(*message.payload(), Bytes::from("first-dataset"));
     assert_eq!(
-        message.header.clone().message_meta.unwrap().get("filename"),
-        Some(&ArrayString::<24>::from("dataset-1.csv").unwrap())
+        message.meta_by_key("filename").unwrap(),
+        "dataset-1.csv"
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -124,11 +125,11 @@ async fn produce_uses_checkpoint_to_fetch_next_dataset() {
 
     let (message, new_state) = producer.produce(topic("html.list"), initial_state).await;
 
-    assert_eq!(message.header.message_type, MessageType::Data);
-    assert_eq!(message.payload, Bytes::from("second-dataset"));
+    assert_eq!(*message.message_type(), MessageType::Data);
+    assert_eq!(*message.payload(), Bytes::from("second-dataset"));
     assert_eq!(
-        message.header.clone().message_meta.unwrap().get("filename"),
-        Some(&ArrayString::<24>::from("dataset-2.csv").unwrap())
+        message.meta_by_key("filename").unwrap(),
+        "dataset-2.csv"
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -158,11 +159,10 @@ async fn produce_respects_ingest_from_back() {
 
     let (message, new_state) = producer.produce(topic("html.list"), initial_state).await;
 
-    assert_eq!(message.header.message_type, MessageType::Data);
-    assert_eq!(message.payload, Bytes::from("latest-dataset"));
+    assert_eq!(*message.message_type(), MessageType::Data);
+    assert_eq!(*message.payload(), Bytes::from("latest-dataset"));
     assert_eq!(
-        message.header.clone().message_meta.unwrap().get("filename"),
-        Some(&ArrayString::<24>::from("dataset-2.csv").unwrap())
+        message.meta_by_key("filename").unwrap(),"dataset-2.csv"
     );
     assert_eq!(
         new_state.last_extracted_url,
@@ -188,9 +188,9 @@ async fn produce_returns_empty_when_checkpoint_is_latest_link() {
     let expected_last_url = initial_state.last_extracted_url.clone();
     let (message, new_state) = producer.produce(topic("html.list"), initial_state).await;
 
-    assert_eq!(message.header.message_type, MessageType::Empty);
-    assert_eq!(message.payload, Bytes::new());
-    assert!(message.header.message_meta.is_none());
+    assert_eq!(*message.message_type(), MessageType::Empty);
+    assert_eq!(*message.payload(), Bytes::new());
+    assert!(Arc::into_inner(message).unwrap().into_meta().is_none());
     assert_eq!(new_state.last_extracted_url, expected_last_url);
 
     server.join().expect("join test server");
