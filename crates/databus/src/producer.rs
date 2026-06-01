@@ -146,10 +146,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        message::{MessageHeader, MessageType},
-        runnable::Runnable,
-    };
+    use crate::runnable::Runnable;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
@@ -188,13 +185,7 @@ mod tests {
             old_state: i32,
         ) -> (Arc<Message<String>>, i32) {
             (
-                Arc::new(Message {
-                    header: MessageHeader {
-                        message_type: MessageType::Data,
-                        message_meta: None,
-                    },
-                    payload: format!("test data {}", old_state + 1),
-                }),
+                Arc::new(Message::new_data(format!("test data {}", old_state + 1))),
                 old_state + 1,
             )
         }
@@ -229,7 +220,7 @@ mod tests {
         scheduled_producer.run().await;
 
         let received = rx.receive().await.expect("Failed to receive message");
-        assert_eq!(received.payload, "test data 1");
+        assert_eq!(received.payload(), "test data 1");
         assert_eq!(state_checker.get_state().await, 1);
     }
 
@@ -252,13 +243,13 @@ mod tests {
         });
 
         let msg1 = rx.receive().await.expect("Failed to receive message 1");
-        assert_eq!(msg1.payload, "test data 1");
+        assert_eq!(msg1.payload(), "test data 1");
 
         let msg2 = rx.receive().await.expect("Failed to receive message 2");
-        assert_eq!(msg2.payload, "test data 2");
+        assert_eq!(msg2.payload(), "test data 2");
 
         let msg3 = rx.receive().await.expect("Failed to receive message 3");
-        assert_eq!(msg3.payload, "test data 3");
+        assert_eq!(msg3.payload(), "test data 3");
 
         cancellation_token.cancel();
         worker.await.unwrap();

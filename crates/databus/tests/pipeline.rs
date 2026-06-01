@@ -4,7 +4,7 @@ use arrayvec::ArrayString;
 use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType},
+    message::Message,
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
     runnable::Runnable,
@@ -74,16 +74,7 @@ impl Producer<String, i32, STR_CAP> for SequenceProducer {
         old_state: i32,
     ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
-        (
-            Arc::new(Message {
-                header: MessageHeader {
-                    message_type: MessageType::Data,
-                    message_meta: None,
-                },
-                payload: format!("item-{next}"),
-            }),
-            next,
-        )
+        (Arc::new(Message::new_data(format!("item-{next}"))), next)
     }
 }
 
@@ -99,13 +90,10 @@ impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
     ) -> (Arc<Message<String>>, i32) {
         let next = old_state + 1;
         (
-            Arc::new(Message {
-                header: MessageHeader {
-                    message_type: MessageType::Data,
-                    message_meta: None,
-                },
-                payload: format!("{}-processed-{next}", message.payload),
-            }),
+            Arc::new(Message::new_data(format!(
+                "{}-processed-{next}",
+                message.payload()
+            ))),
             next,
         )
     }
@@ -120,7 +108,7 @@ impl Storer<String, Vec<String>> for CollectingStorer {
         message: Arc<Message<String>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
-        old_state.push((*message).clone().payload);
+        old_state.push((*message).payload().clone());
         old_state
     }
 }

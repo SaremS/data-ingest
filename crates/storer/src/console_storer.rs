@@ -17,7 +17,7 @@ impl Storer<Bytes, ConsoleStorerState> for ConsoleStorer {
         message: Arc<Message<Bytes>>,
         old_state: ConsoleStorerState,
     ) -> ConsoleStorerState {
-        println!("{:?}", message.payload);
+        println!("{:?}", message.payload());
         old_state
     }
 }

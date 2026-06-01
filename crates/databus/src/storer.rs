@@ -165,7 +165,7 @@ mod tests {
             message: Arc<Message<String>>,
             mut old_state: Vec<String>,
         ) -> Vec<String> {
-            old_state.push(message.payload.clone());
+            old_state.push(message.payload().clone());
             old_state
         }
     }
@@ -175,13 +175,7 @@ mod tests {
     }
 
     fn test_message(payload: &str) -> Arc<Message<String>> {
-        Arc::new(Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: None,
-            },
-            payload: payload.to_string(),
-        })
+        Arc::new(Message::new_data(payload.to_string()))
     }
 
     #[tokio::test]
@@ -217,8 +211,7 @@ mod tests {
 
         bus.add_topic(input_topic);
 
-        let mut bus_storer =
-            BusStorer::new(MockStorer, state, bus.clone(), input_topic).unwrap();
+        let mut bus_storer = BusStorer::new(MockStorer, state, bus.clone(), input_topic).unwrap();
 
         let worker = async {
             bus_storer.run().await;
