@@ -104,16 +104,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::message::{MessageHeader, MessageType};
-
     fn test_message(payload: impl Into<String>) -> Arc<Message<String>> {
-        Arc::new(Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: None,
-            },
-            payload: payload.into(),
-        })
+        Arc::new(Message::new_data(payload.into()))
     }
 
     #[tokio::test]
@@ -130,7 +122,7 @@ mod tests {
         tx.send(test_message("Hello, DataBus!")).await.unwrap();
 
         let received = rx.receive().await.expect("Failed to receive message");
-        assert_eq!(received.payload, "Hello, DataBus!");
+        assert_eq!(received.payload(), "Hello, DataBus!");
     }
 
     #[tokio::test]
@@ -148,7 +140,7 @@ mod tests {
         let bus_clone = bus.clone();
         tokio::spawn(async move {
             while let Some(request) = request_rx.receive().await {
-                assert_eq!(request.payload, "Request to listener".to_string());
+                assert_eq!(*request.payload(), "Request to listener");
 
                 let tx = bus.get_sender(response_topic).unwrap();
                 tx.send(test_message("Response from listener"))
@@ -164,7 +156,7 @@ mod tests {
             .receive()
             .await
             .expect("Failed to receive response");
-        assert_eq!(received.payload, "Response from listener".to_string());
+        assert_eq!(received.payload().clone(), "Response from listener");
     }
 
     #[tokio::test]
@@ -179,7 +171,7 @@ mod tests {
         let tx = bus.get_sender(topic).unwrap();
         tx.send(test_message("test")).await.unwrap();
 
-        assert_eq!(rx1.receive().await.unwrap().payload, "test");
+        assert_eq!(rx1.receive().await.unwrap().payload(), "test");
     }
 
     #[tokio::test]

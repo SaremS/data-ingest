@@ -72,13 +72,7 @@ impl Producer<String, i32, STR_CAP> for TestProducer {
         old_state: i32,
     ) -> (Arc<Message<String>>, i32) {
         (
-            Arc::new(Message {
-                header: MessageHeader {
-                    message_type: MessageType::Data,
-                    message_meta: None,
-                },
-                payload: format!("value-{}", old_state + 1),
-            }),
+            Arc::new(Message::new_data(format!("value-{}", old_state + 1))),
             old_state + 1,
         )
     }
@@ -95,13 +89,10 @@ impl Processor<String, i32, STR_CAP> for TestProcessor {
         old_state: i32,
     ) -> (Arc<Message<String>>, i32) {
         (
-            Arc::new(Message {
-                header: MessageHeader {
-                    message_type: MessageType::Data,
-                    message_meta: None,
-                },
-                payload: format!("{}-processed", message.payload),
-            }),
+            Arc::new(Message::new_data(format!(
+                "{}-processed",
+                message.payload()
+            ))),
             old_state + 1,
         )
     }
@@ -116,7 +107,7 @@ impl Storer<String, Vec<String>> for TestStorer {
         message: Arc<Message<String>>,
         mut old_state: Vec<String>,
     ) -> Vec<String> {
-        old_state.push((*message).clone().payload);
+        old_state.push(message.payload().clone());
         old_state
     }
 }
@@ -133,19 +124,15 @@ async fn root_exports_support_external_publish_and_subscribe() {
     let mut rx = bus.subscribe(&topic("publictopic")).unwrap();
     let tx = bus.get_sender(&t).unwrap();
 
-    tx.send(Arc::new(Message {
-        header: MessageHeader {
-            message_type: MessageType::Error,
-            message_meta: None,
-        },
-        payload: "from integration test".to_string(),
-    }))
+    tx.send(Arc::new(Message::new_error(
+        "from integration test".to_string(),
+    )))
     .await
     .unwrap();
 
     let received = rx.receive().await.expect("message should be received");
-    assert_eq!(received.header.message_type, MessageType::Error);
-    assert_eq!(received.payload, "from integration test");
+    assert_eq!(*received.message_type(), MessageType::Error);
+    assert_eq!(received.payload(), "from integration test");
 }
 
 #[test]

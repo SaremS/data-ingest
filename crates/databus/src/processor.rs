@@ -226,13 +226,7 @@ mod tests {
     }
 
     fn test_message() -> Message<String> {
-        Message {
-            header: MessageHeader {
-                message_type: MessageType::Data,
-                message_meta: None,
-            },
-            payload: "hello bus".to_string(),
-        }
+        Message::new_data("hello bus".to_string())
     }
 
     fn topic(s: &str) -> ArrayString<20> {

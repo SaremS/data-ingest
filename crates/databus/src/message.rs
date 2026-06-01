@@ -20,14 +20,142 @@ pub enum MessageType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageHeader {
-    pub message_type: MessageType,
-    pub message_meta: Option<HashMap<ArrayString<16>, ArrayString<24>>>,
+    message_type: MessageType,
+    message_meta: Option<HashMap<ArrayString<16>, ArrayString<24>>>,
+}
+
+impl MessageHeader {
+    pub fn new(message_type: MessageType) -> Self {
+        Self {
+            message_type,
+            message_meta: None,
+        }
+    }
+
+    pub fn new_with_meta(
+        message_type: MessageType,
+        message_meta: HashMap<ArrayString<16>, ArrayString<24>>,
+    ) -> Self {
+        Self {
+            message_type,
+            message_meta: Some(message_meta),
+        }
+    }
+
+    pub fn message_type(&self) -> &MessageType {
+        &self.message_type
+    }
+
+    pub fn into_message_type(self) -> MessageType {
+        self.message_type
+    }
+
+    pub fn meta_by_key(&self, key: &str) -> Option<&str> {
+        self.message_meta.as_ref()?.get(key).map(|v| v.as_str())
+    }
+
+    pub fn meta_keys(&self) -> Vec<&str> {
+        self.message_meta
+            .as_ref()
+            .map(|meta| meta.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn into_meta(self) -> Option<HashMap<ArrayString<16>, ArrayString<24>>> {
+        self.message_meta
+    }
+
+    pub fn into_meta_by_key(self, key: &str) -> Option<ArrayString<24>> {
+        self.message_meta?.remove(key)
+    }
+
+    pub fn add_meta(mut self, key: &str, value: &str) -> Self {
+        let key = if key.len() > 16 {
+            ArrayString::from(&key[..16]).unwrap()
+        } else {
+            ArrayString::from(key).unwrap()
+        };
+
+        let value = if value.len() > 24 {
+            ArrayString::from(&value[..24]).unwrap()
+        } else {
+            ArrayString::from(value).unwrap()
+        };
+
+        if let Some(ref mut meta) = self.message_meta {
+            meta.insert(key, value);
+        } else {
+            let mut meta = HashMap::new();
+            meta.insert(key, value);
+            self.message_meta = Some(meta);
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message<T: Clone + Send + Sync> {
-    pub header: MessageHeader,
-    pub payload: T,
+    header: MessageHeader,
+    payload: T,
+}
+
+impl<T: Clone + Send + Sync> Message<T> {
+    pub fn new(header: MessageHeader, payload: T) -> Self {
+        Self { header, payload }
+    }
+
+    pub fn new_data(payload: T) -> Self {
+        Self {
+            header: MessageHeader::new(MessageType::Data),
+            payload,
+        }
+    }
+
+    pub fn new_error(payload: T) -> Self {
+        Self {
+            header: MessageHeader::new(MessageType::Error),
+            payload,
+        }
+    }
+
+    pub fn new_empty(payload: T) -> Self {
+        Self {
+            header: MessageHeader::new(MessageType::Empty),
+            payload,
+        }
+    }
+
+    pub fn payload(&self) -> &T {
+        &self.payload
+    }
+
+    pub fn into_payload(self) -> T {
+        self.payload
+    }
+
+    pub fn message_type(&self) -> &MessageType {
+        self.header.message_type()
+    }
+
+    pub fn into_message_type(self) -> MessageType {
+        self.header.into_message_type()
+    }
+
+    pub fn meta_by_key(&self, key: &str) -> Option<&str> {
+        self.header.meta_by_key(key)
+    }
+
+    pub fn meta_keys(&self) -> Vec<&str> {
+        self.header.meta_keys()
+    }
+
+    pub fn into_meta(self) -> Option<HashMap<ArrayString<16>, ArrayString<24>>> {
+        self.header.into_meta()
+    }
+
+    pub fn into_meta_by_key(self, key: &str) -> Option<ArrayString<24>> {
+        self.header.into_meta_by_key(key)
+    }
 }
 
 pub struct MessageBuilder<T: Clone + Send + Sync> {
