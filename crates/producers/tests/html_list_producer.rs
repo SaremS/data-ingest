@@ -2,8 +2,8 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::TcpListener,
-    thread::{self, JoinHandle},
     sync::Arc,
+    thread::{self, JoinHandle},
 };
 
 use arrayvec::ArrayString;
@@ -93,10 +93,7 @@ async fn produce_fetches_first_dataset_and_updates_state() {
 
     assert_eq!(*message.message_type(), MessageType::Data);
     assert_eq!(*message.payload(), Bytes::from("first-dataset"));
-    assert_eq!(
-        message.meta_by_key("filename").unwrap(),
-        "dataset-1.csv"
-    );
+    assert_eq!(message.meta_by_key("filename").unwrap(), "dataset-1.csv");
     assert_eq!(
         new_state.last_extracted_url,
         Some(format!("{base_url}/dataset-1.csv"))
@@ -127,10 +124,7 @@ async fn produce_uses_checkpoint_to_fetch_next_dataset() {
 
     assert_eq!(*message.message_type(), MessageType::Data);
     assert_eq!(*message.payload(), Bytes::from("second-dataset"));
-    assert_eq!(
-        message.meta_by_key("filename").unwrap(),
-        "dataset-2.csv"
-    );
+    assert_eq!(message.meta_by_key("filename").unwrap(), "dataset-2.csv");
     assert_eq!(
         new_state.last_extracted_url,
         Some(format!("{base_url}/dataset-2.csv"))
@@ -161,9 +155,7 @@ async fn produce_respects_ingest_from_back() {
 
     assert_eq!(*message.message_type(), MessageType::Data);
     assert_eq!(*message.payload(), Bytes::from("latest-dataset"));
-    assert_eq!(
-        message.meta_by_key("filename").unwrap(),"dataset-2.csv"
-    );
+    assert_eq!(message.meta_by_key("filename").unwrap(), "dataset-2.csv");
     assert_eq!(
         new_state.last_extracted_url,
         Some(format!("{base_url}/dataset-2.csv"))
