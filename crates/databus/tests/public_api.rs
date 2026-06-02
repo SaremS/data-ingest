@@ -27,7 +27,6 @@ impl CounterState {
     }
 }
 
-#[async_trait]
 impl State<i32> for CounterState {
     async fn get_state(&self) -> i32 {
         *self.value.lock().await
@@ -51,7 +50,6 @@ impl StringListState {
     }
 }
 
-#[async_trait]
 impl State<Vec<String>> for StringListState {
     async fn get_state(&self) -> Vec<String> {
         self.values.lock().await.clone()
@@ -64,7 +62,6 @@ impl State<Vec<String>> for StringListState {
 
 struct TestProducer;
 
-#[async_trait]
 impl Producer<String, i32, STR_CAP> for TestProducer {
     async fn produce(
         &self,
@@ -80,7 +77,6 @@ impl Producer<String, i32, STR_CAP> for TestProducer {
 
 struct TestProcessor;
 
-#[async_trait]
 impl Processor<String, i32, STR_CAP> for TestProcessor {
     async fn process(
         &self,
@@ -100,7 +96,6 @@ impl Processor<String, i32, STR_CAP> for TestProcessor {
 
 struct TestStorer;
 
-#[async_trait]
 impl Storer<String, Vec<String>> for TestStorer {
     async fn store(
         &self,

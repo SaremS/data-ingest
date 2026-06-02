@@ -1,7 +1,6 @@
-use async_trait::async_trait;
+use std::future::Future;
 
-#[async_trait]
 pub trait State<T: Clone + Send + Sync>: Send + Sync {
-    async fn get_state(&self) -> T;
-    async fn set_state(&self, state: T);
+    fn get_state(&self) -> impl Future<Output = T> + Send;
+    fn set_state(&self, state: T) -> impl Future<Output = ()> + Send;
 }

@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::future::Future;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -15,16 +15,15 @@ use crate::{
     state::State,
 };
 
-#[async_trait]
 pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
     Send + Sync
 {
-    async fn process(
+    fn process(
         &self,
         topic: ArrayString<STR_CAP>,
         message: Arc<Message<T>>,
         old_state: S,
-    ) -> (Arc<Message<T>>, S);
+    ) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
 }
 
 pub struct BusProcessor<
@@ -118,7 +117,6 @@ impl<
     }
 }
 
-#[async_trait]
 impl<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
@@ -184,7 +182,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl State<i32> for MockState {
         async fn get_state(&self) -> i32 {
             *self.inner_value.lock().await
@@ -197,7 +194,6 @@ mod tests {
 
     struct MockProcessor;
 
-    #[async_trait]
     impl Processor<String, i32, 20> for MockProcessor {
         async fn process(
             &self,
@@ -212,7 +208,6 @@ mod tests {
 
     struct SlowProcessor;
 
-    #[async_trait]
     impl Processor<String, i32, 20> for SlowProcessor {
         async fn process(
             &self,

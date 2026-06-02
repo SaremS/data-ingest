@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::future::Future;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -24,9 +24,8 @@ pub enum BusStorerError {
     CreationError(Cow<'static, str>),
 }
 
-#[async_trait]
 pub trait Storer<T: Clone + Send + Sync, S: Clone + Send + Sync>: Send + Sync {
-    async fn store(&self, message: Arc<Message<T>>, old_state: S) -> S;
+    fn store(&self, message: Arc<Message<T>>, old_state: S) -> impl Future<Output = S> + Send;
 }
 
 pub struct BusStorer<
@@ -86,7 +85,6 @@ impl<
     }
 }
 
-#[async_trait]
 impl<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
@@ -145,7 +143,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl State<Vec<String>> for MockState {
         async fn get_state(&self) -> Vec<String> {
             self.inner_value.lock().await.clone()
@@ -158,7 +155,6 @@ mod tests {
 
     struct MockStorer;
 
-    #[async_trait]
     impl Storer<String, Vec<String>> for MockStorer {
         async fn store(
             &self,

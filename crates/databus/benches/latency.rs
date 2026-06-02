@@ -6,7 +6,7 @@ use bytes::Bytes;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType},
+    message::Message,
     send_receive_handles::{ReceiveHandle, SendHandle},
 };
 use tokio::runtime::Runtime;
@@ -25,13 +25,7 @@ fn topic(t: &str) -> ArrayString<STR_CAP> {
 }
 
 fn message() -> BenchMessage {
-    Message {
-        header: MessageHeader {
-            message_type: MessageType::Data,
-            message_meta: None,
-        },
-        payload: Bytes::from_static(b"benchmark-payload"),
-    }
+    Message::new_data(Bytes::from_static(b"benchmark-payload"))  
 }
 
 fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {

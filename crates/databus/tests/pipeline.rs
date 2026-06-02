@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use databus::{
     databus::DataBus,
     message::Message,
@@ -29,7 +28,6 @@ impl CounterState {
     }
 }
 
-#[async_trait]
 impl State<i32> for CounterState {
     async fn get_state(&self) -> i32 {
         *self.value.lock().await
@@ -53,7 +51,6 @@ impl CollectedState {
     }
 }
 
-#[async_trait]
 impl State<Vec<String>> for CollectedState {
     async fn get_state(&self) -> Vec<String> {
         self.value.lock().await.clone()
@@ -66,7 +63,6 @@ impl State<Vec<String>> for CollectedState {
 
 struct SequenceProducer;
 
-#[async_trait]
 impl Producer<String, i32, STR_CAP> for SequenceProducer {
     async fn produce(
         &self,
@@ -80,7 +76,6 @@ impl Producer<String, i32, STR_CAP> for SequenceProducer {
 
 struct DecoratingProcessor;
 
-#[async_trait]
 impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
@@ -101,7 +96,6 @@ impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
 
 struct CollectingStorer;
 
-#[async_trait]
 impl Storer<String, Vec<String>> for CollectingStorer {
     async fn store(
         &self,

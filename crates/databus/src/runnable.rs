@@ -1,7 +1,6 @@
-use async_trait::async_trait;
+use std::future::Future;
 
-#[async_trait]
 pub trait Runnable: Send + Sync {
-    async fn run(&mut self);
-    async fn stop(&self);
+    fn run(&mut self) -> impl Future<Output = ()> + Send;
+    fn stop(&self) -> impl Future<Output = ()> + Send;
 }

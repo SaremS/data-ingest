@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::future::Future;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -34,11 +34,10 @@ pub enum ProducerError {
     CreationError(String),
 }
 
-#[async_trait]
 pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
     Send + Sync
 {
-    async fn produce(&self, topic: ArrayString<STR_CAP>, old_state: S) -> (Arc<Message<T>>, S);
+    fn produce(&self, topic: ArrayString<STR_CAP>, old_state: S) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
 }
 
 pub struct ScheduledProducer<
@@ -98,7 +97,6 @@ impl<
     }
 }
 
-#[async_trait]
 impl<
     T: Clone + Send + Sync,
     S: Clone + Send + Sync,
@@ -166,7 +164,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl State<i32> for TestState {
         async fn get_state(&self) -> i32 {
             *self.value.lock().await
@@ -177,7 +174,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl Producer<String, i32, 20> for TestProducer {
         async fn produce(
             &self,
