@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -10,7 +9,6 @@ pub struct ConsoleStorer {}
 #[derive(Clone)]
 pub struct ConsoleStorerState {}
 
-#[async_trait]
 impl Storer<Bytes, ConsoleStorerState> for ConsoleStorer {
     async fn store(
         &self,

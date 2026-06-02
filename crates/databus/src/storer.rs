@@ -1,7 +1,7 @@
 use std::borrow::Cow;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::future::Future;
 
 use arrayvec::ArrayString;
 use thiserror::Error;

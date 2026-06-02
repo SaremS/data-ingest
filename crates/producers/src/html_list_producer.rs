@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use bytes::Bytes;
 use scraper::{Html, Selector};
 use thiserror::Error;
@@ -130,7 +129,6 @@ impl<const STR_CAP: usize> HtmlListProducer<STR_CAP> {
     }
 }
 
-#[async_trait]
 impl<const STR_CAP: usize> Producer<Bytes, HtmlListProducerState, STR_CAP>
     for HtmlListProducer<STR_CAP>
 {

@@ -25,7 +25,7 @@ fn topic(t: &str) -> ArrayString<STR_CAP> {
 }
 
 fn message() -> BenchMessage {
-    Message::new_data(Bytes::from_static(b"benchmark-payload"))  
+    Message::new_data(Bytes::from_static(b"benchmark-payload"))
 }
 
 fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {

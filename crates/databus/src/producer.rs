@@ -1,6 +1,6 @@
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::future::Future;
 
 use arrayvec::ArrayString;
 use thiserror::Error;
@@ -37,7 +37,11 @@ pub enum ProducerError {
 pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
     Send + Sync
 {
-    fn produce(&self, topic: ArrayString<STR_CAP>, old_state: S) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
+    fn produce(
+        &self,
+        topic: ArrayString<STR_CAP>,
+        old_state: S,
+    ) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
 }
 
 pub struct ScheduledProducer<

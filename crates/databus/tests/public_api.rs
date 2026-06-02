@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use arrayvec::ArrayString;
-use async_trait::async_trait;
 use databus::{
     databus::DataBus,
-    message::{Message, MessageHeader, MessageType},
+    message::{Message, MessageType},
     processor::{BusProcessor, BusProcessorError, Processor},
     producer::{Producer, ProducerError, Schedule, ScheduledProducer},
     state::State,
