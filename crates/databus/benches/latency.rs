@@ -16,7 +16,7 @@ const CHANNEL_CAPACITY: usize = 1024;
 const TOPIC: &str = "feed.nasdaq";
 
 type BenchMessage = Message<Bytes>;
-type BenchBus = DataBus<Bytes, STR_CAP>;
+type BenchBus = DataBus<Arc<Message<Bytes>>, STR_CAP>;
 type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
 type BenchSender = SendHandle<Arc<BenchMessage>>;
 

@@ -14,6 +14,7 @@ pub struct SendHandle<T: Clone + Send + Sync> {
     sender: Sender<T>,
 }
 
+#[derive(Debug)]
 pub struct ReceiveHandle<T: Clone + Send + Sync> {
     receiver: Receiver<T>,
 }

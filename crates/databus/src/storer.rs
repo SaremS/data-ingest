@@ -37,7 +37,7 @@ pub struct BusStorer<
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T, STR_CAP>>,
+    bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     receiver: ReceiveHandle<Arc<Message<T>>>,
 
@@ -56,7 +56,7 @@ impl<
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T, STR_CAP>>,
+        bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
         input_topic: ArrayString<STR_CAP>,
     ) -> Result<Self, BusStorerError> {
         if input_topic.is_empty() {

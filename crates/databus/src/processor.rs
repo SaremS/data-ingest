@@ -35,7 +35,7 @@ pub struct BusProcessor<
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<T, STR_CAP>>,
+    bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
     sender: SendHandle<Arc<Message<T>>>,
@@ -68,7 +68,7 @@ impl<
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<T, STR_CAP>>,
+        bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
         input_topic: ArrayString<STR_CAP>,
         output_topic: ArrayString<STR_CAP>,
     ) -> Result<Self, BusProcessorError> {
