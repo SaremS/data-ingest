@@ -72,7 +72,7 @@ impl<
     pub fn new(
         producer: V,
         producer_state: U,
-        bus: Arc<DataBus<T, STR_CAP>>,
+        bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
         topic: ArrayString<STR_CAP>,
         schedule: Schedule,
     ) -> Result<Self, ProducerError> {
@@ -207,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_produce_once() {
-        let bus = Arc::new(DataBus::<String, 20>::new(10));
+        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
         let state = TestState::new(0);
         let state_checker = state.clone();
         let t = topic("testtopic");
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_interval_produce() {
-        let bus = Arc::new(DataBus::<String, 20>::new(10));
+        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
         let state = TestState::new(0);
         let state_checker = state.clone();
         let t = topic("testtopic");
@@ -268,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_producer_stops_when_bus_is_closed() {
-        let bus = Arc::new(DataBus::<String, 20>::new(10));
+        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
         let state = TestState::new(0);
         let test_topic = topic("testtopic");
         bus.add_topic(test_topic);
@@ -284,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduled_producer_stop_cancels_run_loop() {
-        let bus = Arc::new(DataBus::<String, 20>::new(10));
+        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
         let state = TestState::new(0);
         let t = topic("testtopic");
         bus.add_topic(t);

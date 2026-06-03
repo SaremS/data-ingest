@@ -11,24 +11,24 @@ use databus::{
 };
 use tokio::runtime::Runtime;
 
-const STR_CAP: usize = 32;
+const STR_CAP: usize = 16;
 const CHANNEL_CAPACITY: usize = 1024;
 const TOPIC: &str = "feed.nasdaq";
 
-type BenchMessage = Message<Bytes>;
-type BenchBus = DataBus<Arc<Message<Bytes>>, STR_CAP>;
-type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
-type BenchSender = SendHandle<Arc<BenchMessage>>;
+type BenchMessage = Arc<[u8; 1024]>;
+type BenchBus = DataBus<Arc<[u8; 1024]>, STR_CAP>;
+type BenchReceiver = ReceiveHandle<BenchMessage>;
+type BenchSender = SendHandle<BenchMessage>;
 
 fn topic(t: &str) -> ArrayString<STR_CAP> {
     ArrayString::from(t).unwrap()
 }
 
 fn message() -> BenchMessage {
-    Message::new_data(Bytes::from_static(b"benchmark-payload"))
+    Arc::new([b'a'; 1024])
 }
 
-fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {
+fn setup_publish_case() -> (BenchReceiver, BenchMessage, BenchSender) {
     let bus = BenchBus::new(CHANNEL_CAPACITY);
 
     let t = topic(TOPIC);
@@ -37,7 +37,7 @@ fn setup_publish_case() -> (BenchReceiver, Arc<BenchMessage>, BenchSender) {
     let receiver = bus.subscribe(&t).expect("open bus");
     let sender = bus.get_sender(&t).expect("get sender");
 
-    (receiver, Arc::new(message()), sender)
+    (receiver, message(), sender)
 }
 
 async fn drain(receiver: &mut BenchReceiver, publish_count: usize) {
@@ -78,5 +78,5 @@ fn publish_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(latency, publish_benches);
-criterion_main!(latency);
+criterion_group!(latency_with_buffer, publish_benches);
+criterion_main!(latency_with_buffer);

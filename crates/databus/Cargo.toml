@@ -4,11 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-arc-swap = "1.9.1"
 arrayvec = "0.7.6"
-dashmap = "6.2.1"
 futures = "0.3.32"
-im = "15.1.0"
+rustc-hash = "2.1.2"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7.18"
@@ -20,3 +18,14 @@ criterion = { version = "0.7.0", features = ["async_tokio"] }
 [[bench]]
 name = "latency"
 harness = false
+
+[[bench]]
+name = "latency_with_buffer"
+harness = false
+
+[profile.bench]
+debug = true
+
+[profile.release]
+debug = true
+strip = false

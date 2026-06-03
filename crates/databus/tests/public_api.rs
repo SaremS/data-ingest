@@ -112,7 +112,7 @@ fn topic(s: &str) -> ArrayString<STR_CAP> {
 
 #[tokio::test]
 async fn root_exports_support_external_publish_and_subscribe() {
-    let bus = DataBus::<String, STR_CAP>::new(4);
+    let bus = DataBus::<Arc<Message<String>>, STR_CAP>::new(4);
     let t = topic("publictopic");
     bus.add_topic(t);
     let mut rx = bus.subscribe(&topic("publictopic")).unwrap();
@@ -131,7 +131,7 @@ async fn root_exports_support_external_publish_and_subscribe() {
 
 #[test]
 fn public_constructor_validation_errors_are_exposed() {
-    let bus = Arc::new(DataBus::<String, STR_CAP>::new(4));
+    let bus = Arc::new(DataBus::<Arc<Message<String>>, STR_CAP>::new(4));
     let t = topic("input");
     bus.add_topic(t);
 

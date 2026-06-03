@@ -113,7 +113,7 @@ fn topic(s: &str) -> ArrayString<STR_CAP> {
 
 #[tokio::test]
 async fn producer_processor_and_storer_work_together() {
-    let bus = Arc::new(DataBus::<String, STR_CAP>::new(8));
+    let bus = Arc::new(DataBus::<Arc<Message<String>>, STR_CAP>::new(8));
     let producer_state = CounterState::new(0);
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
