@@ -16,7 +16,19 @@ bytes = "1.11.1"
 criterion = { version = "0.7.0", features = ["async_tokio"] }
 
 [[bench]]
-name = "latency"
+name = "databus"
+harness = false
+
+[[bench]]
+name = "producer"
+harness = false
+
+[[bench]]
+name = "processor"
+harness = false
+
+[[bench]]
+name = "storer"
 harness = false
 
 [profile.bench]

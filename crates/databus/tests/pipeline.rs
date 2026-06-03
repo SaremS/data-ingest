@@ -63,7 +63,7 @@ impl State<Vec<String>> for CollectedState {
 
 struct SequenceProducer;
 
-impl Producer<String, i32, STR_CAP> for SequenceProducer {
+impl Producer<Arc<Message<String>>, i32, STR_CAP> for SequenceProducer {
     async fn produce(
         &self,
         _topic: ArrayString<STR_CAP>,

@@ -41,7 +41,7 @@ pub trait Producer<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP
         &self,
         topic: ArrayString<STR_CAP>,
         old_state: S,
-    ) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
+    ) -> impl Future<Output = (T, S)> + Send;
 }
 
 pub struct ScheduledProducer<
@@ -54,7 +54,7 @@ pub struct ScheduledProducer<
     producer: V,
     producer_state: U,
     topic: ArrayString<STR_CAP>,
-    sender: SendHandle<Arc<Message<T>>>,
+    sender: SendHandle<T>,
 
     schedule: Schedule,
     cancellation_token: CancellationToken,
@@ -72,7 +72,7 @@ impl<
     pub fn new(
         producer: V,
         producer_state: U,
-        bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
+        bus: Arc<DataBus<T, STR_CAP>>,
         topic: ArrayString<STR_CAP>,
         schedule: Schedule,
     ) -> Result<Self, ProducerError> {
@@ -111,31 +111,25 @@ impl<
 {
     async fn run(&mut self) {
         loop {
+            let old_state = self.producer_state.get_state().await;
+            let (message, new_state) = self.producer.produce(self.topic, old_state).await;
+
+            if self.sender.send(message).await.is_err() {
+                break; 
+            }
+
+            self.producer_state.set_state(new_state).await;
+
+            let sleep_duration = match self.schedule.next_run() {
+                Some(duration) => duration,
+                None => break, 
+            };
+
             tokio::select! {
                 _ = self.cancellation_token.cancelled() => {
                     break;
                 }
-                should_continue = async {
-                    let old_state = self.producer_state.get_state().await;
-                    let (message, new_state) = self.producer.produce(self.topic, old_state).await;
-
-                    if self.sender.send(message).await.is_err() {
-                        return false;
-                    }
-
-                    self.producer_state.set_state(new_state).await;
-
-                    if let Some(duration) = self.schedule.next_run() {
-                        tokio::time::sleep(duration).await;
-                        true
-                    } else {
-                        false
-                    }
-                } => {
-                    if !should_continue {
-                        break;
-                    }
-                }
+                _ = tokio::time::sleep(sleep_duration) => {}
             }
         }
     }
@@ -178,7 +172,7 @@ mod tests {
         }
     }
 
-    impl Producer<String, i32, 20> for TestProducer {
+    impl Producer<Arc<Message<String>>, i32, 20> for TestProducer {
         async fn produce(
             &self,
             _topic: ArrayString<20>,

@@ -61,7 +61,7 @@ impl State<Vec<String>> for StringListState {
 
 struct TestProducer;
 
-impl Producer<String, i32, STR_CAP> for TestProducer {
+impl Producer<Arc<Message<String>>, i32, STR_CAP> for TestProducer {
     async fn produce(
         &self,
         _topic: ArrayString<STR_CAP>,
