@@ -8,7 +8,6 @@ use arrayvec::ArrayString;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::message::Message;
 use crate::send_receive_handles::{ReceiveHandle, SendHandle, create_send_receive_handles};
 
 #[derive(Debug)]
@@ -104,6 +103,8 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    use crate::message::Message;
 
     fn test_message(payload: impl Into<String>) -> Arc<Message<String>> {
         Arc::new(Message::new_data(payload.into()))
