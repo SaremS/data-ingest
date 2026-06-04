@@ -29,8 +29,10 @@ pub type BenchMessage = Message<Bytes>;
 pub type BenchBus = Arc<DataBus<Arc<BenchMessage>, STR_CAP>>;
 pub type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
 pub type BenchSender = SendHandle<Arc<BenchMessage>>;
-pub type BenchProducerRunner = ScheduledProducer<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProducer>;
-pub type BenchProcessorRunner = BusProcessor<Bytes, usize, BenchState, STR_CAP, BenchProcessor>;
+pub type BenchProducerRunner =
+    ScheduledProducer<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProducer>;
+pub type BenchProcessorRunner =
+    BusProcessor<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProcessor>;
 pub type BenchStorerRunner = BusStorer<Bytes, usize, BenchState, STR_CAP, BenchStorer>;
 
 pub fn topic(t: &str) -> ArrayString<STR_CAP> {
@@ -101,7 +103,7 @@ impl Producer<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProducer {
 
 pub struct BenchProcessor;
 
-impl Processor<Bytes, usize, STR_CAP> for BenchProcessor {
+impl Processor<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProcessor {
     async fn process(
         &self,
         _topic: ArrayString<STR_CAP>,

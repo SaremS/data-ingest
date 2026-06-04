@@ -115,14 +115,14 @@ impl<
             let (message, new_state) = self.producer.produce(self.topic, old_state).await;
 
             if self.sender.send(message).await.is_err() {
-                break; 
+                break;
             }
 
             self.producer_state.set_state(new_state).await;
 
             let sleep_duration = match self.schedule.next_run() {
                 Some(duration) => duration,
-                None => break, 
+                None => break,
             };
 
             tokio::select! {

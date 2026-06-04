@@ -76,7 +76,7 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for SequenceProducer {
 
 struct DecoratingProcessor;
 
-impl Processor<String, i32, STR_CAP> for DecoratingProcessor {
+impl Processor<Arc<Message<String>>, i32, STR_CAP> for DecoratingProcessor {
     async fn process(
         &self,
         _topic: ArrayString<STR_CAP>,

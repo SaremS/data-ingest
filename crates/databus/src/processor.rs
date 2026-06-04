@@ -21,9 +21,9 @@ pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CA
     fn process(
         &self,
         topic: ArrayString<STR_CAP>,
-        message: Arc<Message<T>>,
+        message: T,
         old_state: S,
-    ) -> impl Future<Output = (Arc<Message<T>>, S)> + Send;
+    ) -> impl Future<Output = (T, S)> + Send;
 }
 
 pub struct BusProcessor<
@@ -35,11 +35,11 @@ pub struct BusProcessor<
 > {
     processor: V,
     processor_state: U,
-    bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
+    bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
-    sender: SendHandle<Arc<Message<T>>>,
-    receiver: ReceiveHandle<Arc<Message<T>>>,
+    sender: SendHandle<T>,
+    receiver: ReceiveHandle<T>,
 
     cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
@@ -68,7 +68,7 @@ impl<
     pub fn new(
         processor: V,
         processor_state: U,
-        bus: Arc<DataBus<Arc<Message<T>>, STR_CAP>>,
+        bus: Arc<DataBus<T, STR_CAP>>,
         input_topic: ArrayString<STR_CAP>,
         output_topic: ArrayString<STR_CAP>,
     ) -> Result<Self, BusProcessorError> {
@@ -194,7 +194,7 @@ mod tests {
 
     struct MockProcessor;
 
-    impl Processor<String, i32, 20> for MockProcessor {
+    impl Processor<Arc<Message<String>>, i32, 20> for MockProcessor {
         async fn process(
             &self,
             _topic: ArrayString<20>,
@@ -208,7 +208,7 @@ mod tests {
 
     struct SlowProcessor;
 
-    impl Processor<String, i32, 20> for SlowProcessor {
+    impl Processor<Arc<Message<String>>, i32, 20> for SlowProcessor {
         async fn process(
             &self,
             _topic: ArrayString<20>,

@@ -76,7 +76,7 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for TestProducer {
 
 struct TestProcessor;
 
-impl Processor<String, i32, STR_CAP> for TestProcessor {
+impl Processor<Arc<Message<String>>, i32, STR_CAP> for TestProcessor {
     async fn process(
         &self,
         _topic: ArrayString<STR_CAP>,
