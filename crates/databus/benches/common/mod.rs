@@ -32,7 +32,7 @@ pub type BenchSender = SendHandle<Arc<BenchMessage>>;
 pub type BenchProducerRunner =
     ScheduledProducer<Arc<Message<Bytes>>, usize, STR_CAP, BenchProducer>;
 pub type BenchProcessorRunner =
-    BusProcessor<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProcessor>;
+    BusProcessor<Arc<Message<Bytes>>, usize, STR_CAP, BenchProcessor>;
 pub type BenchStorerRunner = BusStorer<Bytes, usize, BenchState, STR_CAP, BenchStorer>;
 
 pub fn topic(t: &str) -> ArrayString<STR_CAP> {
@@ -112,9 +112,12 @@ impl Processor<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProcessor {
         &self,
         _topic: ArrayString<STR_CAP>,
         message: Arc<Message<Bytes>>,
-        old_state: usize,
-    ) -> (Arc<Message<Bytes>>, usize) {
-        (message, old_state + 1)
+        old_state: Arc<std::sync::Mutex<usize>>,
+    ) -> Arc<Message<Bytes>> {
+        let mut old_state_guard = old_state.lock().unwrap();
+        *old_state_guard += 1;
+
+        message
     }
 }
 
@@ -159,7 +162,7 @@ pub fn setup_processor_case() -> (
     let output_receiver = bus.subscribe(&output_topic).expect("subscribe output");
     let processor = BusProcessor::new(
         BenchProcessor,
-        BenchState::new(0),
+        0,
         bus.clone(),
         input_topic,
         output_topic,

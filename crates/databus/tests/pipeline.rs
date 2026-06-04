@@ -84,16 +84,16 @@ impl Processor<Arc<Message<String>>, i32, STR_CAP> for DecoratingProcessor {
         &self,
         _topic: ArrayString<STR_CAP>,
         message: Arc<Message<String>>,
-        old_state: i32,
-    ) -> (Arc<Message<String>>, i32) {
-        let next = old_state + 1;
-        (
-            Arc::new(Message::new_data(format!(
-                "{}-processed-{next}",
-                message.payload()
-            ))),
-            next,
-        )
+        old_state: Arc<std::sync::Mutex<i32>>,
+    ) -> Arc<Message<String>> {
+        let mut old_state_guard = old_state.lock().unwrap();
+        let next = *old_state_guard + 1;
+        *old_state_guard = next;
+
+        Arc::new(Message::new_data(format!(
+            "{}-processed-{next}",
+            message.payload()
+        )))
     }
 }
 
@@ -118,7 +118,7 @@ fn topic(s: &str) -> ArrayString<STR_CAP> {
 async fn producer_processor_and_storer_work_together() {
     let bus = Arc::new(DataBus::<Arc<Message<String>>, STR_CAP>::new(8));
     let producer_state = 0;
-    let processor_state = CounterState::new(0);
+    let processor_state = 0;
     let storer_state = CollectedState::new(Vec::new());
 
     let raw_topic = topic("raw.one");
@@ -155,6 +155,7 @@ async fn producer_processor_and_storer_work_together() {
 
     let processor_worker = tokio::spawn(async move {
         processor.run().await;
+        processor
     });
     let storer_worker = tokio::spawn(async move {
         storer.run().await;
@@ -166,13 +167,14 @@ async fn producer_processor_and_storer_work_together() {
     sleep(Duration::from_millis(50)).await;
     let producer_state = producer.producer_state();
     drop(producer);
-    bus.shutdown();
 
-    processor_worker.await.unwrap();
+    bus.shutdown();
+    let processor_state = processor_worker.await.unwrap().processor_state();
+
     storer_worker.await.unwrap();
 
     assert_eq!(producer_state, 1);
-    assert_eq!(processor_state.get_state().await, 1);
+    assert_eq!(processor_state, 1);
     assert_eq!(
         storer_state.get_state().await,
         vec!["item-1-processed-1".to_string()]
