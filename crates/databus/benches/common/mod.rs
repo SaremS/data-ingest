@@ -135,14 +135,8 @@ pub fn setup_producer_case() -> (BenchProducerRunner, BenchReceiver) {
     bus.add_topic(output_topic);
 
     let receiver = bus.subscribe(&output_topic).expect("subscribe producer");
-    let producer = ScheduledProducer::new(
-        BenchProducer,
-        0,
-        bus,
-        output_topic,
-        Schedule::Once,
-    )
-    .expect("create producer");
+    let producer = ScheduledProducer::new(BenchProducer, 0, bus, output_topic, Schedule::Once)
+        .expect("create producer");
 
     (producer, receiver)
 }

@@ -112,7 +112,10 @@ impl<
 {
     async fn run(&mut self) {
         loop {
-            let message = self.producer.produce(self.topic, self.producer_state.clone()).await;
+            let message = self
+                .producer
+                .produce(self.topic, self.producer_state.clone())
+                .await;
 
             if self.sender.send(message).await.is_err() {
                 break;

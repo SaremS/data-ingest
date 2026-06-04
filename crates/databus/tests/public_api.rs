@@ -67,13 +67,11 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for TestProducer {
         _topic: ArrayString<STR_CAP>,
         old_state: Arc<std::sync::Mutex<i32>>,
     ) -> Arc<Message<String>> {
-        
         let mut old_state_guard = old_state.lock().unwrap();
         let next = *old_state_guard + 1;
         *old_state_guard = next;
 
         Arc::new(Message::new_data(format!("value-{}", next)))
-        
     }
 }
 
@@ -138,17 +136,12 @@ fn public_constructor_validation_errors_are_exposed() {
     let t = topic("input");
     bus.add_topic(t);
 
-    let producer_error = match ScheduledProducer::new(
-        TestProducer,
-        0,
-        bus.clone(),
-        t,
-        Schedule::Once,
-    ) {
-        // A valid topic was provided so this should succeed; we just verify the type compiles.
-        Ok(_) => ProducerError::CreationError("Topic cannot be empty".into()),
-        Err(err) => err,
-    };
+    let producer_error =
+        match ScheduledProducer::new(TestProducer, 0, bus.clone(), t, Schedule::Once) {
+            // A valid topic was provided so this should succeed; we just verify the type compiles.
+            Ok(_) => ProducerError::CreationError("Topic cannot be empty".into()),
+            Err(err) => err,
+        };
 
     let processor_error =
         match BusProcessor::new(TestProcessor, CounterState::new(0), bus.clone(), t, t) {
