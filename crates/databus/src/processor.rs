@@ -205,7 +205,7 @@ mod tests {
         ) -> Arc<Message<String>> {
             sleep(Duration::from_millis(25)).await;
             let mut old_state_guard = old_state.lock().unwrap();
-            *old_state_guard += 1; 
+            *old_state_guard += 1;
 
             message
         }

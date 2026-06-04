@@ -88,7 +88,6 @@ impl Processor<Arc<Message<String>>, i32, STR_CAP> for TestProcessor {
         let next = *old_state_guard + 1;
         *old_state_guard = next;
 
-
         Arc::new(Message::new_data(format!(
             "{}-processed",
             message.payload()
@@ -145,11 +144,10 @@ fn public_constructor_validation_errors_are_exposed() {
             Err(err) => err,
         };
 
-    let processor_error =
-        match BusProcessor::new(TestProcessor, 0, bus.clone(), t, t) {
-            Ok(_) => panic!("expected processor creation to fail"),
-            Err(err) => err,
-        };
+    let processor_error = match BusProcessor::new(TestProcessor, 0, bus.clone(), t, t) {
+        Ok(_) => panic!("expected processor creation to fail"),
+        Err(err) => err,
+    };
 
     let storer_error = match BusStorer::new(TestStorer, StringListState::new(Vec::new()), bus, t) {
         // A valid topic was provided so this should succeed; verify the type compiles.

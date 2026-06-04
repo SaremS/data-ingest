@@ -31,8 +31,7 @@ pub type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
 pub type BenchSender = SendHandle<Arc<BenchMessage>>;
 pub type BenchProducerRunner =
     ScheduledProducer<Arc<Message<Bytes>>, usize, STR_CAP, BenchProducer>;
-pub type BenchProcessorRunner =
-    BusProcessor<Arc<Message<Bytes>>, usize, STR_CAP, BenchProcessor>;
+pub type BenchProcessorRunner = BusProcessor<Arc<Message<Bytes>>, usize, STR_CAP, BenchProcessor>;
 pub type BenchStorerRunner = BusStorer<Bytes, usize, BenchState, STR_CAP, BenchStorer>;
 
 pub fn topic(t: &str) -> ArrayString<STR_CAP> {
@@ -160,14 +159,8 @@ pub fn setup_processor_case() -> (
 
     let input_sender = bus.get_sender(&input_topic).expect("get input sender");
     let output_receiver = bus.subscribe(&output_topic).expect("subscribe output");
-    let processor = BusProcessor::new(
-        BenchProcessor,
-        0,
-        bus.clone(),
-        input_topic,
-        output_topic,
-    )
-    .expect("create processor");
+    let processor = BusProcessor::new(BenchProcessor, 0, bus.clone(), input_topic, output_topic)
+        .expect("create processor");
 
     (
         bus,
