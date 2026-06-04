@@ -67,10 +67,13 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for SequenceProducer {
     async fn produce(
         &self,
         _topic: ArrayString<STR_CAP>,
-        old_state: i32,
-    ) -> (Arc<Message<String>>, i32) {
-        let next = old_state + 1;
-        (Arc::new(Message::new_data(format!("item-{next}"))), next)
+        old_state: Arc<std::sync::Mutex<i32>>,
+    ) -> Arc<Message<String>> {
+        let mut old_state_guard = old_state.lock().unwrap();
+        let next = *old_state_guard + 1;
+        *old_state_guard = next;
+
+        Arc::new(Message::new_data(format!("item-{next}")))
     }
 }
 
@@ -114,7 +117,7 @@ fn topic(s: &str) -> ArrayString<STR_CAP> {
 #[tokio::test]
 async fn producer_processor_and_storer_work_together() {
     let bus = Arc::new(DataBus::<Arc<Message<String>>, STR_CAP>::new(8));
-    let producer_state = CounterState::new(0);
+    let producer_state = 0;
     let processor_state = CounterState::new(0);
     let storer_state = CollectedState::new(Vec::new());
 
@@ -126,7 +129,7 @@ async fn producer_processor_and_storer_work_together() {
 
     let mut producer = ScheduledProducer::new(
         SequenceProducer,
-        producer_state.clone(),
+        producer_state,
         bus.clone(),
         raw_topic,
         Schedule::Once,
@@ -159,15 +162,16 @@ async fn producer_processor_and_storer_work_together() {
 
     sleep(Duration::from_millis(10)).await;
     producer.run().await;
-    drop(producer);
 
     sleep(Duration::from_millis(50)).await;
+    let producer_state = producer.producer_state();
+    drop(producer);
     bus.shutdown();
 
     processor_worker.await.unwrap();
     storer_worker.await.unwrap();
 
-    assert_eq!(producer_state.get_state().await, 1);
+    assert_eq!(producer_state, 1);
     assert_eq!(processor_state.get_state().await, 1);
     assert_eq!(
         storer_state.get_state().await,

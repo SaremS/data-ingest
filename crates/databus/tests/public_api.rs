@@ -65,12 +65,15 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for TestProducer {
     async fn produce(
         &self,
         _topic: ArrayString<STR_CAP>,
-        old_state: i32,
-    ) -> (Arc<Message<String>>, i32) {
-        (
-            Arc::new(Message::new_data(format!("value-{}", old_state + 1))),
-            old_state + 1,
-        )
+        old_state: Arc<std::sync::Mutex<i32>>,
+    ) -> Arc<Message<String>> {
+        
+        let mut old_state_guard = old_state.lock().unwrap();
+        let next = *old_state_guard + 1;
+        *old_state_guard = next;
+
+        Arc::new(Message::new_data(format!("value-{}", next)))
+        
     }
 }
 
@@ -137,7 +140,7 @@ fn public_constructor_validation_errors_are_exposed() {
 
     let producer_error = match ScheduledProducer::new(
         TestProducer,
-        CounterState::new(0),
+        0,
         bus.clone(),
         t,
         Schedule::Once,

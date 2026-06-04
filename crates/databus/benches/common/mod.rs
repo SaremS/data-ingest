@@ -30,7 +30,7 @@ pub type BenchBus = Arc<DataBus<Arc<BenchMessage>, STR_CAP>>;
 pub type BenchReceiver = ReceiveHandle<Arc<BenchMessage>>;
 pub type BenchSender = SendHandle<Arc<BenchMessage>>;
 pub type BenchProducerRunner =
-    ScheduledProducer<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProducer>;
+    ScheduledProducer<Arc<Message<Bytes>>, usize, STR_CAP, BenchProducer>;
 pub type BenchProcessorRunner =
     BusProcessor<Arc<Message<Bytes>>, usize, BenchState, STR_CAP, BenchProcessor>;
 pub type BenchStorerRunner = BusStorer<Bytes, usize, BenchState, STR_CAP, BenchStorer>;
@@ -95,9 +95,13 @@ impl Producer<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProducer {
     async fn produce(
         &self,
         _topic: ArrayString<STR_CAP>,
-        old_state: usize,
-    ) -> (Arc<Message<Bytes>>, usize) {
-        (Arc::new(message()), old_state + 1)
+        old_state: Arc<std::sync::Mutex<usize>>,
+    ) -> Arc<Message<Bytes>> {
+        let mut state_guard = old_state.lock().unwrap();
+        let next_state = *state_guard + 1;
+        *state_guard = next_state;
+
+        Arc::new(message())
     }
 }
 
@@ -133,7 +137,7 @@ pub fn setup_producer_case() -> (BenchProducerRunner, BenchReceiver) {
     let receiver = bus.subscribe(&output_topic).expect("subscribe producer");
     let producer = ScheduledProducer::new(
         BenchProducer,
-        BenchState::new(0),
+        0,
         bus,
         output_topic,
         Schedule::Once,
