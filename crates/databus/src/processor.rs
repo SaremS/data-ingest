@@ -127,10 +127,6 @@ impl<
     async fn run(&mut self) {
         loop {
             tokio::select! {
-                _ = self.cancellation_token.cancelled() => {
-                    break;
-                }
-
                 option_msg = self.receiver.receive() => {
                     match option_msg {
                         Some(message) => {

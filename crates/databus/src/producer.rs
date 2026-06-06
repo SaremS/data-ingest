@@ -126,12 +126,7 @@ impl<
                 None => break,
             };
 
-            tokio::select! {
-                _ = self.cancellation_token.cancelled() => {
-                    break;
-                }
-                _ = tokio::time::sleep(sleep_duration) => {}
-            }
+            _ = tokio::time::sleep(sleep_duration).await
         }
     }
 

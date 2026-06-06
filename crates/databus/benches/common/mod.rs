@@ -113,8 +113,8 @@ impl Processor<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProcessor {
         message: Arc<Message<Bytes>>,
         old_state: Arc<std::sync::Mutex<usize>>,
     ) -> Arc<Message<Bytes>> {
-        let mut old_state_guard = old_state.lock().unwrap();
-        *old_state_guard += 1;
+        //let mut old_state_guard = old_state.lock().unwrap();
+        //*old_state_guard += 1;
 
         message
     }
