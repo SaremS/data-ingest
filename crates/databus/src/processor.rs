@@ -116,22 +116,14 @@ impl<
 > Runnable for BusProcessor<T, S, STR_CAP, V>
 {
     async fn run(&mut self) {
-        loop {
-            let option_msg = self.receiver.receive().await;
-            match option_msg {
-                Some(message) => {
-                    let new_message = self.processor.process(
-                        self.input_topic,
-                        message,
-                        &mut self.processor_state,
-                    );
-                    if self.sender.send(new_message).await.is_err() {
-                        break;
-                    }
-                }
-                None => {
-                    break;
-                }
+        while let Some(message) = self.receiver.receive().await {
+            let new_message = self.processor.process(
+                self.input_topic,
+                message,
+                &mut self.processor_state,
+            );
+            if self.sender.send(new_message).await.is_err() {
+                break;
             }
         }
     }
