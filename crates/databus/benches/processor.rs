@@ -1,10 +1,11 @@
 mod common;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use databus::runnable::Runnable;
+use std::time::{Duration, Instant};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 
-use common::{drain, setup_processor_case};
+use common::{drain, setup_running_processor_case};
 
 fn processor_benches(c: &mut Criterion) {
     let runtime = Runtime::new().expect("criterion tokio runtime");
@@ -16,27 +17,29 @@ fn processor_benches(c: &mut Criterion) {
             BenchmarkId::from_parameter(message_count),
             &message_count,
             |b, &message_count| {
-                b.to_async(&runtime).iter_batched(
-                    setup_processor_case,
-                    |(bus, mut processor, input_sender, mut output_receiver, msg)| async move {
-                        let worker = tokio::spawn(async move {
-                            processor.run().await;
-                        });
+                b.iter_custom(|iters| {
+                    runtime.block_on(async move {
+                        let mut elapsed = Duration::ZERO;
 
-                        for _ in 0..message_count {
-                            input_sender
-                                .send(msg.clone())
-                                .await
-                                .expect("send to processor");
+                        for _ in 0..iters {
+                            let mut case = setup_running_processor_case();
+                            let start = Instant::now();
+
+                            for _ in 0..message_count {
+                                case.input_sender
+                                    .send(case.msg.clone())
+                                    .await
+                                    .expect("send to processor");
+                            }
+
+                            drain(&mut case.output_receiver, message_count).await;
+                            elapsed += start.elapsed();
+                            case.finish().await;
                         }
-                        drop(input_sender);
 
-                        drain(&mut output_receiver, message_count).await;
-                        bus.shutdown();
-                        worker.await.expect("processor task should finish");
-                    },
-                    BatchSize::SmallInput,
-                );
+                        elapsed
+                    })
+                });
             },
         );
     }

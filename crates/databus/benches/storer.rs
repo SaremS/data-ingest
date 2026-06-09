@@ -1,10 +1,11 @@
 mod common;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use databus::runnable::Runnable;
+use std::time::{Duration, Instant};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 
-use common::{await_stores, setup_storer_case};
+use common::{await_stores, setup_running_storer_case};
 
 fn storer_benches(c: &mut Criterion) {
     let runtime = Runtime::new().expect("criterion tokio runtime");
@@ -16,27 +17,29 @@ fn storer_benches(c: &mut Criterion) {
             BenchmarkId::from_parameter(message_count),
             &message_count,
             |b, &message_count| {
-                b.to_async(&runtime).iter_batched(
-                    setup_storer_case,
-                    |(bus, mut storer, input_sender, mut completions, msg)| async move {
-                        let worker = tokio::spawn(async move {
-                            storer.run().await;
-                        });
+                b.iter_custom(|iters| {
+                    runtime.block_on(async move {
+                        let mut elapsed = Duration::ZERO;
 
-                        for _ in 0..message_count {
-                            input_sender
-                                .send(msg.clone())
-                                .await
-                                .expect("send to storer");
+                        for _ in 0..iters {
+                            let mut case = setup_running_storer_case();
+                            let start = Instant::now();
+
+                            for _ in 0..message_count {
+                                case.input_sender
+                                    .send(case.msg.clone())
+                                    .await
+                                    .expect("send to storer");
+                            }
+
+                            await_stores(&mut case.completions, message_count).await;
+                            elapsed += start.elapsed();
+                            case.finish().await;
                         }
-                        drop(input_sender);
 
-                        await_stores(&mut completions, message_count).await;
-                        bus.shutdown();
-                        worker.await.expect("storer task should finish");
-                    },
-                    BatchSize::SmallInput,
-                );
+                        elapsed
+                    })
+                });
             },
         );
     }

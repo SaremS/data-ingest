@@ -2,5 +2,4 @@ use std::future::Future;
 
 pub trait Runnable: Send + Sync {
     fn run(&mut self) -> impl Future<Output = ()> + Send;
-    fn stop(&self) -> impl Future<Output = ()> + Send;
 }

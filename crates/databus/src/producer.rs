@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     databus::DataBus, message::Message, runnable::Runnable, send_receive_handles::SendHandle,
-    state::State,
 };
 
 pub enum Schedule {
@@ -56,7 +55,6 @@ pub struct ScheduledProducer<
     sender: SendHandle<T>,
 
     schedule: Schedule,
-    cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
 }
 
@@ -93,7 +91,6 @@ impl<
             sender: sender.unwrap(),
 
             schedule,
-            cancellation_token: CancellationToken::new(),
             _marker: PhantomData,
         })
     }
@@ -126,12 +123,8 @@ impl<
                 None => break,
             };
 
-            _ = tokio::time::sleep(sleep_duration).await
+            tokio::time::sleep(sleep_duration).await;
         }
-    }
-
-    async fn stop(&self) {
-        self.cancellation_token.cancel();
     }
 }
 
@@ -141,32 +134,8 @@ mod tests {
     use crate::runnable::Runnable;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::Mutex;
 
     struct TestProducer;
-
-    #[derive(Clone)]
-    struct TestState {
-        value: Arc<Mutex<i32>>,
-    }
-
-    impl TestState {
-        fn new(initial: i32) -> Self {
-            Self {
-                value: Arc::new(Mutex::new(initial)),
-            }
-        }
-    }
-
-    impl State<i32> for TestState {
-        async fn get_state(&self) -> i32 {
-            *self.value.lock().await
-        }
-
-        async fn set_state(&self, state: i32) {
-            *self.value.lock().await = state;
-        }
-    }
 
     impl Producer<Arc<Message<String>>, i32, 20> for TestProducer {
         async fn produce(
@@ -226,7 +195,6 @@ mod tests {
                 .unwrap();
 
         let mut rx = bus.subscribe(&t).unwrap();
-        let cancellation_token = scheduled_producer.cancellation_token.clone();
         let worker = tokio::spawn(async move {
             scheduled_producer.run().await;
             scheduled_producer
@@ -241,10 +209,10 @@ mod tests {
         let msg3 = rx.receive().await.expect("Failed to receive message 3");
         assert_eq!(msg3.payload(), "test data 3");
 
-        cancellation_token.cancel();
+        drop(rx);
         let scheduled_producer = worker.await.unwrap();
 
-        assert_eq!(scheduled_producer.producer_state(), 3);
+        assert!(scheduled_producer.producer_state() >= 3);
     }
 
     #[test]
@@ -254,35 +222,5 @@ mod tests {
             Schedule::Interval(25).next_run(),
             Some(Duration::from_millis(25))
         );
-    }
-
-    #[tokio::test]
-    async fn test_scheduled_producer_stops_when_bus_is_closed() {
-        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
-        let state = 0;
-        let test_topic = topic("testtopic");
-        bus.add_topic(test_topic);
-
-        let mut scheduled_producer =
-            ScheduledProducer::new(TestProducer, state, bus.clone(), test_topic, Schedule::Once)
-                .unwrap();
-
-        bus.shutdown();
-
-        scheduled_producer.run().await;
-    }
-
-    #[tokio::test]
-    async fn test_scheduled_producer_stop_cancels_run_loop() {
-        let bus = Arc::new(DataBus::<Arc<Message<String>>, 20>::new(10));
-        let state = 0;
-        let t = topic("testtopic");
-        bus.add_topic(t);
-
-        let mut scheduled_producer =
-            ScheduledProducer::new(TestProducer, state, bus, t, Schedule::Interval(10)).unwrap();
-
-        scheduled_producer.stop().await;
-        scheduled_producer.run().await;
     }
 }

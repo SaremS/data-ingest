@@ -97,6 +97,23 @@ impl<T: Clone + Send + Sync, const STR_CAP: usize> DataBus<T, STR_CAP> {
             None => Err(GetSenderError::TopicNotFound(Cow::Owned(topic.to_string()))),
         }
     }
+
+    pub fn drop_topic(&self, topic: &str) -> Result<(), GetSenderError> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return Err(GetSenderError::BusClosed);
+        }
+
+        let mut receiver_guard = self.receivers.lock().unwrap();
+        let mut sender_guard = self.senders.lock().unwrap();
+
+        match receiver_guard.remove(topic) {
+            Some(_) => {
+                sender_guard.remove(topic).unwrap();
+                Ok(())
+            }
+            None => Err(GetSenderError::TopicNotFound(Cow::Owned(topic.to_string()))),
+        }
+    }
 }
 
 #[cfg(test)]

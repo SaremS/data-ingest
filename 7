@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use arrayvec::ArrayString;
 use databus::{
@@ -6,10 +6,58 @@ use databus::{
     message::{Message, MessageType},
     processor::{BusProcessor, BusProcessorError, Processor},
     producer::{Producer, ProducerError, Schedule, ScheduledProducer},
+    state::State,
     storer::{BusStorer, BusStorerError, Storer},
 };
+use tokio::sync::Mutex;
 
 const STR_CAP: usize = 32;
+
+#[derive(Clone)]
+struct CounterState {
+    value: Arc<Mutex<i32>>,
+}
+
+impl CounterState {
+    fn new(initial: i32) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(initial)),
+        }
+    }
+}
+
+impl State<i32> for CounterState {
+    async fn get_state(&self) -> i32 {
+        *self.value.lock().await
+    }
+
+    async fn set_state(&self, state: i32) {
+        *self.value.lock().await = state;
+    }
+}
+
+#[derive(Clone)]
+struct StringListState {
+    values: Arc<Mutex<Vec<String>>>,
+}
+
+impl StringListState {
+    fn new(initial: Vec<String>) -> Self {
+        Self {
+            values: Arc::new(Mutex::new(initial)),
+        }
+    }
+}
+
+impl State<Vec<String>> for StringListState {
+    async fn get_state(&self) -> Vec<String> {
+        self.values.lock().await.clone()
+    }
+
+    async fn set_state(&self, state: Vec<String>) {
+        *self.values.lock().await = state;
+    }
+}
 
 struct TestProducer;
 
@@ -30,14 +78,15 @@ impl Producer<Arc<Message<String>>, i32, STR_CAP> for TestProducer {
 struct TestProcessor;
 
 impl Processor<Arc<Message<String>>, i32, STR_CAP> for TestProcessor {
-    fn process(
+    async fn process(
         &self,
         _topic: ArrayString<STR_CAP>,
         message: Arc<Message<String>>,
         old_state: &mut i32,
     ) -> Arc<Message<String>> {
-        let next = *old_state + 1;
-        *old_state = next;
+        let mut old_state_guard = old_state.lock().unwrap();
+        let next = *old_state_guard + 1;
+        *old_state_guard = next;
 
         Arc::new(Message::new_data(format!(
             "{}-processed",
@@ -48,10 +97,14 @@ impl Processor<Arc<Message<String>>, i32, STR_CAP> for TestProcessor {
 
 struct TestStorer;
 
-impl Storer<Arc<Message<String>>, Vec<String>> for TestStorer {
-    async fn store(&self, message: Arc<Message<String>>, old_state: Arc<Mutex<Vec<String>>>) {
-        let mut old_state_guard = old_state.lock().unwrap();
-        (*old_state_guard).push(message.payload().clone());
+impl Storer<String, Vec<String>> for TestStorer {
+    async fn store(
+        &self,
+        message: Arc<Message<String>>,
+        mut old_state: Vec<String>,
+    ) -> Vec<String> {
+        old_state.push(message.payload().clone());
+        old_state
     }
 }
 
@@ -96,7 +149,7 @@ fn public_constructor_validation_errors_are_exposed() {
         Err(err) => err,
     };
 
-    let storer_error = match BusStorer::new(TestStorer, Vec::new(), bus, t) {
+    let storer_error = match BusStorer::new(TestStorer, StringListState::new(Vec::new()), bus, t) {
         // A valid topic was provided so this should succeed; verify the type compiles.
         Ok(_) => BusStorerError::CreationError("Input topic cannot be empty".into()),
         Err(err) => err,

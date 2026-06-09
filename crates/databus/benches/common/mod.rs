@@ -10,13 +10,13 @@ use databus::{
     message::Message,
     processor::{BusProcessor, Processor},
     producer::{Producer, Schedule, ScheduledProducer},
+    runnable::Runnable,
     send_receive_handles::{ReceiveHandle, SendHandle},
-    state::State,
     storer::{BusStorer, Storer},
 };
-use tokio::sync::{
-    Mutex,
-    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    task::JoinHandle,
 };
 
 pub const STR_CAP: usize = 32;
@@ -32,7 +32,39 @@ pub type BenchSender = SendHandle<Arc<BenchMessage>>;
 pub type BenchProducerRunner =
     ScheduledProducer<Arc<Message<Bytes>>, usize, STR_CAP, BenchProducer>;
 pub type BenchProcessorRunner = BusProcessor<Arc<Message<Bytes>>, usize, STR_CAP, BenchProcessor>;
-pub type BenchStorerRunner = BusStorer<Bytes, usize, BenchState, STR_CAP, BenchStorer>;
+pub type BenchStorerRunner = BusStorer<Arc<Message<Bytes>>, usize, STR_CAP, BenchStorer>;
+
+pub struct RunningProcessorCase {
+    pub bus: BenchBus,
+    pub input_sender: BenchSender,
+    pub output_receiver: BenchReceiver,
+    pub worker: JoinHandle<()>,
+    pub msg: Arc<BenchMessage>,
+}
+
+impl RunningProcessorCase {
+    pub async fn finish(self) {
+        drop(self.input_sender);
+        self.bus.shutdown();
+        self.worker.await.expect("processor task should finish");
+    }
+}
+
+pub struct RunningStorerCase {
+    pub bus: BenchBus,
+    pub input_sender: BenchSender,
+    pub completions: UnboundedReceiver<()>,
+    pub worker: JoinHandle<()>,
+    pub msg: Arc<BenchMessage>,
+}
+
+impl RunningStorerCase {
+    pub async fn finish(self) {
+        drop(self.input_sender);
+        self.bus.shutdown();
+        self.worker.await.expect("storer task should finish");
+    }
+}
 
 pub fn topic(t: &str) -> ArrayString<STR_CAP> {
     ArrayString::from(t).unwrap()
@@ -65,29 +97,6 @@ pub async fn drain(receiver: &mut BenchReceiver, publish_count: usize) {
     }
 }
 
-#[derive(Clone)]
-pub struct BenchState {
-    value: Arc<Mutex<usize>>,
-}
-
-impl BenchState {
-    pub fn new(initial: usize) -> Self {
-        Self {
-            value: Arc::new(Mutex::new(initial)),
-        }
-    }
-}
-
-impl State<usize> for BenchState {
-    async fn get_state(&self) -> usize {
-        *self.value.lock().await
-    }
-
-    async fn set_state(&self, state: usize) {
-        *self.value.lock().await = state;
-    }
-}
-
 pub struct BenchProducer;
 
 impl Producer<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProducer {
@@ -107,15 +116,12 @@ impl Producer<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProducer {
 pub struct BenchProcessor;
 
 impl Processor<Arc<Message<Bytes>>, usize, STR_CAP> for BenchProcessor {
-    async fn process(
+    fn process(
         &self,
         _topic: ArrayString<STR_CAP>,
         message: Arc<Message<Bytes>>,
-        old_state: Arc<std::sync::Mutex<usize>>,
+        _old_state: &mut usize,
     ) -> Arc<Message<Bytes>> {
-        //let mut old_state_guard = old_state.lock().unwrap();
-        //*old_state_guard += 1;
-
         message
     }
 }
@@ -124,10 +130,12 @@ pub struct BenchStorer {
     completions: UnboundedSender<()>,
 }
 
-impl Storer<Bytes, usize> for BenchStorer {
-    async fn store(&self, _message: Arc<Message<Bytes>>, old_state: usize) -> usize {
+impl Storer<Arc<Message<Bytes>>, usize> for BenchStorer {
+    async fn store(&self, _message: Arc<Message<Bytes>>, old_state: Arc<std::sync::Mutex<usize>>) {
+        let mut old_state_guard = old_state.lock().unwrap();
+        *old_state_guard += 1;
+
         self.completions.send(()).expect("record store completion");
-        old_state + 1
     }
 }
 
@@ -171,6 +179,21 @@ pub fn setup_processor_case() -> (
     )
 }
 
+pub fn setup_running_processor_case() -> RunningProcessorCase {
+    let (bus, mut processor, input_sender, output_receiver, msg) = setup_processor_case();
+    let worker = tokio::spawn(async move {
+        processor.run().await;
+    });
+
+    RunningProcessorCase {
+        bus,
+        input_sender,
+        output_receiver,
+        worker,
+        msg,
+    }
+}
+
 pub fn setup_storer_case() -> (
     BenchBus,
     BenchStorerRunner,
@@ -189,7 +212,7 @@ pub fn setup_storer_case() -> (
         BenchStorer {
             completions: completion_tx,
         },
-        BenchState::new(0),
+        0,
         bus.clone(),
         input_topic,
     )
@@ -202,6 +225,21 @@ pub fn setup_storer_case() -> (
         completion_rx,
         Arc::new(message()),
     )
+}
+
+pub fn setup_running_storer_case() -> RunningStorerCase {
+    let (bus, mut storer, input_sender, completions, msg) = setup_storer_case();
+    let worker = tokio::spawn(async move {
+        storer.run().await;
+    });
+
+    RunningStorerCase {
+        bus,
+        input_sender,
+        completions,
+        worker,
+        msg,
+    }
 }
 
 pub async fn await_stores(receiver: &mut UnboundedReceiver<()>, store_count: usize) {

@@ -1,11 +1,9 @@
 use std::borrow::Cow;
-use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use arrayvec::ArrayString;
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
 use crate::{
     databus::DataBus,
@@ -16,12 +14,7 @@ use crate::{
 pub trait Processor<T: Clone + Send + Sync, S: Clone + Send + Sync, const STR_CAP: usize>:
     Send + Sync
 {
-    fn process(
-        &self,
-        topic: ArrayString<STR_CAP>,
-        message: T,
-        old_state: Arc<std::sync::Mutex<S>>,
-    ) -> impl Future<Output = T> + Send;
+    fn process(&self, topic: ArrayString<STR_CAP>, message: T, old_state: &mut S) -> T;
 }
 
 pub struct BusProcessor<
@@ -31,14 +24,13 @@ pub struct BusProcessor<
     V: Processor<T, S, STR_CAP>,
 > {
     processor: V,
-    processor_state: Arc<std::sync::Mutex<S>>,
+    processor_state: S,
     bus: Arc<DataBus<T, STR_CAP>>,
     input_topic: ArrayString<STR_CAP>,
     output_topic: ArrayString<STR_CAP>,
     sender: SendHandle<T>,
     receiver: ReceiveHandle<T>,
 
-    cancellation_token: CancellationToken,
     _marker: PhantomData<S>,
 }
 
@@ -100,20 +92,19 @@ impl<
 
         Ok(Self {
             processor,
-            processor_state: Arc::new(std::sync::Mutex::new(processor_state)),
+            processor_state,
             bus,
             input_topic,
             output_topic,
             sender: sender.unwrap(),
             receiver: receiver.unwrap(),
 
-            cancellation_token: CancellationToken::new(),
             _marker: PhantomData,
         })
     }
 
-    pub fn processor_state(&self) -> S {
-        self.processor_state.lock().unwrap().clone()
+    pub fn processor_state(&self) -> &S {
+        &self.processor_state
     }
 }
 
@@ -126,27 +117,23 @@ impl<
 {
     async fn run(&mut self) {
         loop {
-            tokio::select! {
-                option_msg = self.receiver.receive() => {
-                    match option_msg {
-                        Some(message) => {
-                            let old_state = self.processor_state.clone();
-                            let new_message = self.processor.process(self.input_topic, message, old_state).await;
-                            if self.sender.send(new_message).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => {
-                            break;
-                        }
+            let option_msg = self.receiver.receive().await;
+            match option_msg {
+                Some(message) => {
+                    let new_message = self.processor.process(
+                        self.input_topic,
+                        message,
+                        &mut self.processor_state,
+                    );
+                    if self.sender.send(new_message).await.is_err() {
+                        break;
                     }
+                }
+                None => {
+                    break;
                 }
             }
         }
-    }
-
-    async fn stop(&self) {
-        self.cancellation_token.cancel();
     }
 }
 
@@ -176,15 +163,14 @@ mod tests {
     struct MockProcessor;
 
     impl Processor<Arc<Message<String>>, i32, 20> for MockProcessor {
-        async fn process(
+        fn process(
             &self,
             _topic: ArrayString<20>,
             message: Arc<Message<String>>,
-            old_state: Arc<std::sync::Mutex<i32>>,
+            old_state: &mut i32,
         ) -> Arc<Message<String>> {
-            let mut old_state_guard = old_state.lock().unwrap();
-            let next = *old_state_guard + 1;
-            *old_state_guard = next;
+            let next = *old_state + 1;
+            *old_state = next;
 
             message
         }
@@ -193,15 +179,14 @@ mod tests {
     struct SlowProcessor;
 
     impl Processor<Arc<Message<String>>, i32, 20> for SlowProcessor {
-        async fn process(
+        fn process(
             &self,
             _topic: ArrayString<20>,
             message: Arc<Message<String>>,
-            old_state: Arc<std::sync::Mutex<i32>>,
+            old_state: &mut i32,
         ) -> Arc<Message<String>> {
-            sleep(Duration::from_millis(25)).await;
-            let mut old_state_guard = old_state.lock().unwrap();
-            *old_state_guard += 1;
+            std::thread::sleep(Duration::from_millis(25));
+            *old_state += 1;
 
             message
         }
@@ -313,7 +298,7 @@ mod tests {
 
         let final_state = processor.processor_state();
         assert_eq!(
-            final_state, 1,
+            *final_state, 1,
             "The state should have been incremented by the processor"
         );
     }
@@ -339,20 +324,28 @@ mod tests {
     #[tokio::test]
     async fn test_bus_processor_stop_cancels_run_loop() {
         let bus = Arc::new(DataBus::new(10));
+        let bus_clone = bus.clone();
         bus.add_topic(ArrayString::from("input.topic").unwrap());
         bus.add_topic(ArrayString::from("output.topic").unwrap());
         let state = 0;
         let mut bus_processor = BusProcessor::new(
             MockProcessor,
             state,
-            bus,
+            bus_clone,
             ArrayString::from("input.topic").unwrap(),
             ArrayString::from("output.topic").unwrap(),
         )
         .unwrap();
 
-        bus_processor.stop().await;
-        bus_processor.run().await;
+        let worker = tokio::spawn(async move {
+            bus_processor.run().await;
+            bus_processor
+        });
+
+        bus.clone().drop_topic("output.topic").unwrap();
+        let sender = bus.get_sender("input.topic").unwrap();
+        sender.send(Arc::new(test_message())).await.unwrap(); //cancel run
+        let _ = worker.await.unwrap();
     }
 
     #[tokio::test]
@@ -384,7 +377,7 @@ mod tests {
         let (worker, _) = tokio::join!(worker, driver);
         let state = worker.processor_state();
 
-        assert_eq!(state, 1);
+        assert_eq!(*state, 1);
     }
 
     #[tokio::test]
