@@ -129,7 +129,20 @@ impl<
 }
 
 pub trait RunnableProducer {
-    async fn run(&mut self);
+    fn run_producer(&mut self) -> impl Future<Output = ()> + Send;
+}
+
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    const STR_CAP: usize,
+    V: Producer<T, S, STR_CAP> + Send,
+> RunnableProducer for ScheduledProducer<T, S, STR_CAP, V>
+{
+    #[inline(always)]
+    fn run_producer(&mut self) -> impl Future<Output = ()> + Send {
+        self.run()
+    }
 }
 
 #[cfg(test)]

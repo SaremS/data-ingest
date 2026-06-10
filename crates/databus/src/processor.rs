@@ -127,6 +127,23 @@ impl<
     }
 }
 
+pub trait RunnableProcessor {
+    fn run_processor(&mut self) -> impl Future<Output = ()> + Send;
+}
+
+impl<
+    T: Clone + Send + Sync,
+    S: Clone + Send + Sync,
+    const STR_CAP: usize,
+    V: Processor<T, S, STR_CAP> + Send,
+> RunnableProcessor for BusProcessor<T, S, STR_CAP, V>
+{
+    #[inline(always)]
+    fn run_processor(&mut self) -> impl Future<Output = ()> + Send {
+        self.run()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
