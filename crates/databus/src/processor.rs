@@ -117,11 +117,9 @@ impl<
 {
     async fn run(&mut self) {
         while let Some(message) = self.receiver.receive().await {
-            let new_message = self.processor.process(
-                self.input_topic,
-                message,
-                &mut self.processor_state,
-            );
+            let new_message =
+                self.processor
+                    .process(self.input_topic, message, &mut self.processor_state);
             if self.sender.send(new_message).await.is_err() {
                 break;
             }
@@ -134,23 +132,9 @@ mod tests {
     use super::*;
 
     use std::sync::Arc;
-    use tokio::sync::Mutex;
     use tokio::time::{Duration, sleep};
 
     use crate::message::Message;
-
-    #[derive(Clone)]
-    struct MockState {
-        inner_value: Arc<Mutex<i32>>,
-    }
-
-    impl MockState {
-        fn new(initial: i32) -> Self {
-            Self {
-                inner_value: Arc::new(Mutex::new(initial)),
-            }
-        }
-    }
 
     struct MockProcessor;
 

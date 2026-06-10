@@ -128,6 +128,10 @@ impl<
     }
 }
 
+pub trait RunnableProducer {
+    async fn run(&mut self);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
